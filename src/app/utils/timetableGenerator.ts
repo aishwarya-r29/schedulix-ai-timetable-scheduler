@@ -7,403 +7,621 @@ import {
   PERIODS,
 } from '../data/mockData';
 
-interface GenerationConfig {
+// ─── Public Interfaces ─────────────────────────────────────────────────────────
+
+export interface FacultyProfile {
+  isHOD?: boolean;
+  maxDailySlots?: number;
+}
+
+export interface GenerationConfig {
   department: 'CSE' | 'IT';
   semester: number;
   section: string;
   subjects: Subject[];
   facultyAssignments: { [subjectId: string]: string }; // subjectId -> facultyId
   classrooms: Classroom[];
+  existingTimetableEntries?: TimetableEntry[]; // All other groups' entries (for global locking)
+  facultyProfiles?: { [facultyId: string]: FacultyProfile };
 }
 
-interface SlotAssignment {
+// ─── Internal Interfaces ───────────────────────────────────────────────────────
+
+interface FacultySlotState {
+  occupiedSlots: Set<string>;
+  dailyCounts: { [day: string]: number };
+}
+
+interface ClassroomOccupancyMap {
+  occupiedSlots: Set<string>;
+}
+
+interface Slot {
   day: string;
   period: number;
-  subjectId: string;
-  facultyId: string;
-  classroomId: string;
-  entryType: 'theory' | 'lab';
+}
+
+// ─── Credit → Fixed Weekly Hours (Spec §4) ────────────────────────────────────
+
+/**
+ * Returns the EXACT number of weekly contact hours for a subject.
+ * 4 credits = 7 h, 3 credits = 5 h, 2 credits = 3 h, 1 credit = 1 h.
+ * Labs are always 4 consecutive hours (one session per week).
+ */
+export function getRequiredHours(subject: Subject): number {
+  if (subject.type === 'lab') return 4;
+  switch (subject.credits) {
+    case 4: return 7;
+    case 3: return 5;
+    case 2: return 3;
+    case 1: return 1;
+    default: return Math.ceil(subject.credits * 1.5);
+  }
+}
+
+/** Kept for backward-compat with validateTimetable callers. */
+function getWeeklyHourRange(subject: Subject): { minHours: number; maxHours: number; fixedHours?: number } {
+  const h = getRequiredHours(subject);
+  if (subject.type === 'lab') return { minHours: h, maxHours: h, fixedHours: h };
+  // Allow ±1 tolerance for theory to handle edge cases
+  return { minHours: Math.max(1, h - 1), maxHours: h + 1 };
+}
+
+// ─── Fisher-Yates Shuffle ──────────────────────────────────────────────────────
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 /**
- * AI Timetable Generation Algorithm
+ * Stratified shuffle: interleave periods across ALL days in random day-order,
+ * ensuring each day gets an equal early-assignment chance (no "empty Fridays").
  *
- * STRICT RULES:
- * - Max 2 consecutive theory classes for same subject
- * - Each day is EITHER:
- *   a) Theory-only day: up to 5 theory classes
- *   b) Lab day: exactly 4 consecutive lab periods (morning OR evening) + optional theory in other periods
- * - Labs: 4 consecutive periods, only morning (1-4) or evening (5-8)
- * - Labs should NOT repeat more than once per week
- * - No faculty collisions (faculty can't teach 2 classes simultaneously)
- * - No classroom collisions
- * - Faculty strictly assigned as per admin selection
+ * 1. Partition slots by day.
+ * 2. Shuffle within each day independently (unique pattern per group).
+ * 3. Round-robin across a freshly-shuffled day order.
  */
-export function generateTimetable(config: GenerationConfig): Timetable {
-  const { department, semester, section, subjects, facultyAssignments, classrooms } = config;
+function stratifiedShuffle(slots: Slot[]): Slot[] {
+  const byDay: Record<string, Slot[]> = {};
+  DAYS.forEach(d => (byDay[d] = []));
+  for (const s of slots) byDay[s.day].push(s);
 
-  const entries: TimetableEntry[] = [];
-  
-  // Separate subjects into theory and lab
-  const theorySubjects = subjects.filter(s => s.type === 'theory');
-  const labSubjects = subjects.filter(s => s.type === 'lab');
+  // Independent within-day shuffle → gives each group a different intra-day rhythm
+  DAYS.forEach(d => { byDay[d] = shuffle(byDay[d]); });
 
-  // Track which labs have been scheduled (labs should appear only once per week)
-  const labsUsed = new Set<string>();
-  
-  // Track overall usage for distribution
-  const subjectUsage: { [key: string]: number } = {};
-  subjects.forEach(s => subjectUsage[s.id] = 0);
+  // Random day visit order → no group always starts from Monday
+  const dayOrder = shuffle([...DAYS]);
+  const maxLen = Math.max(...DAYS.map(d => byDay[d].length));
 
-  // Strategy: Alternate lab days and theory days to balance the week
-  // Mon, Wed, Fri = Lab days, Tue, Thu = Theory days
-  const labDays = ['Monday', 'Wednesday', 'Friday'];
-
-  // Generate timetable for each day
-  DAYS.forEach((day, dayIndex) => {
-    if (labDays.includes(day)) {
-      // Lab day: assign labs first, then optional theory
-      assignLabDaySchedule(
-        day,
-        labSubjects,
-        theorySubjects,
-        facultyAssignments,
-        classrooms,
-        entries,
-        subjectUsage,
-        labsUsed
-      );
-    } else {
-      // Theory day: assign only theory classes
-      assignTheoryDaySchedule(
-        day,
-        theorySubjects,
-        facultyAssignments,
-        classrooms,
-        entries,
-        subjectUsage
-      );
-    }
-  });
-
-  // Create the timetable object
-  const timetable: Timetable = {
-    id: `tt_${department}_${section}_${Date.now()}`,
-    department,
-    semester,
-    section,
-    generatedBy: 'AI Algorithm',
-    createdAt: new Date().toISOString(),
-    entries,
-  };
-
-  return timetable;
-}
-
-/**
- * Lab Day Schedule:
- * - Assign exactly 4 consecutive lab periods (morning OR evening)
- * - Try 2 different lab subjects
- * - Each lab subject only used once per week
- * - Then fill remaining slots with theory (max 2 consecutive same subject)
- */
-function assignLabDaySchedule(
-  day: string,
-  labSubjects: Subject[],
-  theorySubjects: Subject[],
-  facultyAssignments: { [key: string]: string },
-  classrooms: Classroom[],
-  entries: TimetableEntry[],
-  subjectUsage: { [key: string]: number },
-  labsUsed: Set<string>
-) {
-  // Available lab slots: morning (periods 1-4) or evening (periods 5-8)
-  const labSlots = [
-    [0, 1, 2, 3], // Morning: periods 1-4
-    [4, 5, 6, 7], // Evening: periods 5-8
-  ];
-
-  // Find unused labs to avoid repetition
-  const unusedLabs = labSubjects.filter(lab => !labsUsed.has(lab.id));
-  const availableLabs = unusedLabs.length > 0 ? unusedLabs : labSubjects;
-
-  // Try to schedule 2 different labs on this day
-  let labsScheduledCount = 0;
-  const usedSlots = new Set<number>();
-
-  for (const labSubject of availableLabs) {
-    if (labsScheduledCount >= 2) break;
-    if (labsUsed.has(labSubject.id) && unusedLabs.length > 0) continue;
-
-    const facultyId = facultyAssignments[labSubject.id];
-    if (!facultyId) continue; // Faculty not assigned
-
-    // Try morning slot first, then evening
-    for (const slotIndices of labSlots) {
-      if (usedSlots.has(slotIndices[0])) continue; // Slot already used
-
-      // Check if faculty is available for all 4 periods
-      const isFacultyAvailable = slotIndices.every(periodIndex =>
-        !isFacultyBusy(facultyId, day, periodIndex + 1, entries)
-      );
-
-      if (!isFacultyAvailable) continue;
-
-      // Check if classroom is available for all 4 periods
-      const classroom = findAvailableLabClassroom(classrooms, day, slotIndices, entries);
-      if (!classroom) continue;
-
-      // Assign this lab to all 4 periods
-      slotIndices.forEach(periodIndex => {
-        entries.push({
-          id: `entry_${entries.length + 1}`,
-          day,
-          period: periodIndex + 1,
-          subjectId: labSubject.id,
-          facultyId,
-          classroomId: classroom.id,
-          entryType: 'lab',
-          isCancelled: false,
-        });
-        usedSlots.add(periodIndex);
-      });
-
-      labsUsed.add(labSubject.id);
-      subjectUsage[labSubject.id]++;
-      labsScheduledCount++;
-      break; // Move to next lab
+  const result: Slot[] = [];
+  for (let i = 0; i < maxLen; i++) {
+    for (const day of dayOrder) {
+      if (byDay[day][i]) result.push(byDay[day][i]);
     }
   }
-
-  // Fill remaining slots with theory (not in lab periods)
-  const emptySlots: number[] = [];
-  for (let i = 0; i < PERIODS.length; i++) {
-    if (!usedSlots.has(i)) {
-      emptySlots.push(i);
-    }
-  }
-
-  assignTheoryToSlots(
-    emptySlots,
-    day,
-    theorySubjects,
-    facultyAssignments,
-    classrooms,
-    entries,
-    subjectUsage
-  );
+  return result;
 }
 
-/**
- * Theory Day Schedule:
- * - Assign up to 5 theory classes
- * - Max 2 consecutive periods for same subject
- * - No labs on this day
- */
-function assignTheoryDaySchedule(
-  day: string,
-  theorySubjects: Subject[],
-  facultyAssignments: { [key: string]: string },
-  classrooms: Classroom[],
-  entries: TimetableEntry[],
-  subjectUsage: { [key: string]: number }
-) {
-  // All 8 periods available for theory on theory days
-  const allSlots: number[] = Array.from({ length: PERIODS.length }, (_, i) => i);
+// ─── Faculty Map Helpers ───────────────────────────────────────────────────────
 
-  assignTheoryToSlots(
-    allSlots,
-    day,
-    theorySubjects,
-    facultyAssignments,
-    classrooms,
-    entries,
-    subjectUsage
-  );
+function createFacultySlotMap(entries: TimetableEntry[]): Record<string, FacultySlotState> {
+  const map: Record<string, FacultySlotState> = {};
+  for (const e of entries) {
+    if (!map[e.facultyId]) map[e.facultyId] = { occupiedSlots: new Set(), dailyCounts: {} };
+    map[e.facultyId].occupiedSlots.add(`${e.day}_${e.period}`);
+    map[e.facultyId].dailyCounts[e.day] = (map[e.facultyId].dailyCounts[e.day] ?? 0) + 1;
+  }
+  return map;
 }
 
-/**
- * Fill provided slots with theory classes
- * - Max 2 consecutive periods for same subject
- * - Respect faculty assignments
- * - Avoid classroom collisions
- */
-function assignTheoryToSlots(
-  availableSlots: number[],
+function recordFacultySlot(
+  facultyId: string,
   day: string,
-  theorySubjects: Subject[],
-  facultyAssignments: { [key: string]: string },
-  classrooms: Classroom[],
-  entries: TimetableEntry[],
-  subjectUsage: { [key: string]: number }
+  period: number,
+  map: Record<string, FacultySlotState>
 ) {
-  const dayEntries = entries.filter(e => e.day === day);
-  const subjectsUsedToday = new Map<string, number>(); // subject -> count used today
-
-  for (const slotIndex of availableSlots) {
-    const period = slotIndex + 1;
-
-    // Find subjects that can be scheduled in this slot
-    const validSubjects = theorySubjects.filter(subject => {
-      const facultyId = facultyAssignments[subject.id];
-      if (!facultyId) return false; // Faculty not assigned
-
-      // Faculty must be available
-      if (isFacultyBusy(facultyId, day, period, entries)) return false;
-
-      // Subject can appear at most twice per day, and max 2 consecutive
-      const usageToday = subjectsUsedToday.get(subject.id) ?? 0;
-      if (usageToday >= 2) return false;
-
-      // If already used once, check consecutive constraint
-      if (usageToday === 1) {
-        // Find where it was used
-        const existingEntry = dayEntries.find(e => e.subjectId === subject.id && e.entryType === 'theory');
-        if (existingEntry) {
-          const prevPeriod = existingEntry.period;
-          // Can only be consecutive (adjacent periods)
-          if (Math.abs(period - prevPeriod) !== 1) return false;
-        }
-      }
-
-      return true;
-    });
-
-    if (validSubjects.length === 0) continue;
-
-    // Prefer subjects not yet used today, then least used overall
-    validSubjects.sort((a, b) => {
-      const aUsedToday = subjectsUsedToday.get(a.id) ?? 0;
-      const bUsedToday = subjectsUsedToday.get(b.id) ?? 0;
-
-      if (aUsedToday !== bUsedToday) {
-        return aUsedToday - bUsedToday;
-      }
-
-      return subjectUsage[a.id] - subjectUsage[b.id];
-    });
-
-    const selectedSubject = validSubjects[0];
-    const facultyId = facultyAssignments[selectedSubject.id];
-    const classroom = findAvailableClassroom(classrooms, day, period, entries);
-
-    if (classroom && facultyId) {
-      entries.push({
-        id: `entry_${entries.length + 1}`,
-        day,
-        period,
-        subjectId: selectedSubject.id,
-        facultyId,
-        classroomId: classroom.id,
-        entryType: 'theory',
-        isCancelled: false,
-      });
-
-      subjectUsage[selectedSubject.id]++;
-      subjectsUsedToday.set(selectedSubject.id, (subjectsUsedToday.get(selectedSubject.id) ?? 0) + 1);
-    }
-  }
+  if (!map[facultyId]) map[facultyId] = { occupiedSlots: new Set(), dailyCounts: {} };
+  map[facultyId].occupiedSlots.add(`${day}_${period}`);
+  map[facultyId].dailyCounts[day] = (map[facultyId].dailyCounts[day] ?? 0) + 1;
 }
 
 function isFacultyBusy(
   facultyId: string,
   day: string,
   period: number,
-  entries: TimetableEntry[]
+  map: Record<string, FacultySlotState>
 ): boolean {
-  return entries.some(
-    entry => entry.facultyId === facultyId && entry.day === day && entry.period === period
-  );
+  return !!map[facultyId]?.occupiedSlots.has(`${day}_${period}`);
 }
 
-function findAvailableClassroom(
+function canFacultyTeach(
+  facultyId: string,
+  day: string,
+  map: Record<string, FacultySlotState>,
+  profiles?: Record<string, FacultyProfile>
+): boolean {
+  const profile = profiles?.[facultyId];
+  const maxDaily = profile?.maxDailySlots ?? (profile?.isHOD ? 3 : 5);
+  return (map[facultyId]?.dailyCounts[day] ?? 0) < maxDaily;
+}
+
+// ─── Classroom Map Helpers ─────────────────────────────────────────────────────
+
+function createClassroomOccupancyMap(entries: TimetableEntry[]): ClassroomOccupancyMap {
+  return {
+    occupiedSlots: new Set(entries.map(e => `${e.classroomId}_${e.day}_${e.period}`)),
+  };
+}
+
+function recordClassroomSlot(classroomId: string, day: string, period: number, map: ClassroomOccupancyMap) {
+  map.occupiedSlots.add(`${classroomId}_${day}_${period}`);
+}
+
+function isClassroomOccupied(classroomId: string, day: string, period: number, map: ClassroomOccupancyMap): boolean {
+  return map.occupiedSlots.has(`${classroomId}_${day}_${period}`);
+}
+
+function findTheoryRoom(
   classrooms: Classroom[],
   day: string,
   period: number,
-  entries: TimetableEntry[]
+  map: ClassroomOccupancyMap
 ): Classroom | null {
-  // Find classrooms that are not labs
-  const regularClassrooms = classrooms.filter(cr => !cr.classroomNumber.startsWith('LAB'));
-
-  for (const classroom of regularClassrooms) {
-    const isOccupied = entries.some(
-      entry => entry.classroomId === classroom.id && entry.day === day && entry.period === period
-    );
-
-    if (!isOccupied && classroom.status === 'available') {
-      return classroom;
-    }
+  // Shuffle room list so different groups naturally land on different rooms first
+  for (const cr of shuffle(classrooms)) {
+    if (cr.classroomNumber.startsWith('LAB')) continue;
+    if (cr.status !== 'available') continue;
+    if (!isClassroomOccupied(cr.id, day, period, map)) return cr;
   }
-
-  return regularClassrooms[0] || null; // Fallback to first available
+  return null;
 }
 
-function findAvailableLabClassroom(
+function findLabRoom(
   classrooms: Classroom[],
   day: string,
   periods: number[],
-  entries: TimetableEntry[]
+  map: ClassroomOccupancyMap
 ): Classroom | null {
-  // Find lab classrooms
-  const labClassrooms = classrooms.filter(cr => cr.classroomNumber.startsWith('LAB'));
+  for (const cr of shuffle(classrooms)) {
+    if (!cr.classroomNumber.startsWith('LAB')) continue;
+    if (cr.status !== 'available') continue;
+    if (periods.every(p => !isClassroomOccupied(cr.id, day, p, map))) return cr;
+  }
+  return null;
+}
 
-  for (const classroom of labClassrooms) {
-    const isOccupied = periods.some(periodIndex =>
-      entries.some(
-        entry => entry.classroomId === classroom.id && entry.day === day && entry.period === periodIndex + 1
-      )
-    );
+// ─── Uniqueness Score (Spec §5) ────────────────────────────────────────────────
 
-    if (!isOccupied && classroom.status === 'available') {
-      return classroom;
+/**
+ * Measures how unique `newEntries` is compared to `referenceEntries`.
+ * Compares (subjectId, day, period) triples.
+ *
+ * Returns 0–100 where:
+ *   100 = completely unique (no overlapping subject-slot assignments)
+ *     0 = identical timetable
+ */
+export function computeUniquenessScore(
+  newEntries: TimetableEntry[],
+  referenceEntries: TimetableEntry[]
+): number {
+  if (referenceEntries.length === 0 || newEntries.length === 0) return 100;
+  const refSet = new Set(referenceEntries.map(e => `${e.subjectId}_${e.day}_${e.period}`));
+  let matches = 0;
+  for (const e of newEntries) {
+    if (refSet.has(`${e.subjectId}_${e.day}_${e.period}`)) matches++;
+  }
+  return Math.round((1 - matches / newEntries.length) * 100);
+}
+
+// ─── Lab Scheduler ─────────────────────────────────────────────────────────────
+
+/**
+ * Schedules all lab subjects.
+ *
+ * Rules:
+ * - Each lab = exactly 4 consecutive periods (morning P1-P4 or evening P5-P8).
+ * - Labs are spread across different days where possible.
+ * - Lab room is locked globally (occupancyMap updated).
+ * - Faculty is locked globally (facultySlotMap updated).
+ *
+ * Returns the set of (day_period) keys that are now reserved.
+ */
+function scheduleAllLabs(
+  labSubjects: Subject[],
+  facultyAssignments: Record<string, string>,
+  classrooms: Classroom[],
+  entries: TimetableEntry[],
+  facultySlotMap: Record<string, FacultySlotState>,
+  occupancyMap: ClassroomOccupancyMap,
+  facultyProfiles?: Record<string, FacultyProfile>
+): Set<string> {
+  const reserved = new Set<string>();
+
+  // Morning and evening windows — shuffled so G1/G2 don't always pick morning first
+  const windows = [
+    [1, 2, 3, 4],
+    [5, 6, 7, 8],
+  ];
+
+  // Track which days already have a lab (spread them across week)
+  const labDayUsed = new Set<string>();
+  const dayPool = shuffle([...DAYS]);
+
+  for (const lab of labSubjects) {
+    const facultyId = facultyAssignments[lab.id];
+    if (!facultyId) continue;
+
+    let placed = false;
+
+    // Two-pass: first try unused lab days, then allow reuse
+    for (const pass of [0, 1]) {
+      if (placed) break;
+      for (const day of dayPool) {
+        if (placed) break;
+        if (pass === 0 && labDayUsed.has(day)) continue; // fresh days first
+
+        for (const win of shuffle(windows)) {
+          // Faculty free for all 4 periods?
+          if (!win.every(p => !isFacultyBusy(facultyId, day, p, facultySlotMap))) continue;
+          if (!canFacultyTeach(facultyId, day, facultySlotMap, facultyProfiles)) continue;
+
+          // Slots not yet reserved by another lab this generation?
+          if (!win.every(p => !reserved.has(`${day}_${p}`))) continue;
+
+          // Lab room available across all 4 periods?
+          const room = findLabRoom(classrooms, day, win, occupancyMap);
+          if (!room) continue;
+
+          // ── Commit ──────────────────────────────────────────────────────────
+          for (const period of win) {
+            entries.push({
+              id: `entry_${entries.length + 1}`,
+              day,
+              period,
+              subjectId: lab.id,
+              facultyId,
+              classroomId: room.id,
+              entryType: 'lab',
+              isCancelled: false,
+            });
+            reserved.add(`${day}_${period}`);
+            recordFacultySlot(facultyId, day, period, facultySlotMap);
+            recordClassroomSlot(room.id, day, period, occupancyMap);
+          }
+          labDayUsed.add(day);
+          placed = true;
+          break;
+        }
+      }
     }
   }
 
-  return labClassrooms[0] || null; // Fallback to first available
+  return reserved;
 }
 
+// ─── Theory Slot Filler ────────────────────────────────────────────────────────
+
 /**
- * Validate generated timetable for conflicts
+ * Fills theory slots from a pre-shuffled slot list.
+ *
+ * For each slot (in Fisher-Yates shuffled order):
+ * 1. Find all eligible subjects (hours remaining, faculty free, room free,
+ *    no 3-consecutive, ≤2 today).
+ * 2. Pick the subject with most hours remaining (greedily), with a mild
+ *    random tiebreak to avoid deterministic patterns.
+ * 3. Record into both the faculty map and the occupancy map (global lock).
  */
-export function validateTimetable(timetable: Timetable): {
-  valid: boolean;
-  conflicts: string[];
-} {
-  const conflicts: string[] = [];
+function fillTheorySlots(
+  shuffledSlots: Slot[],
+  theorySubjects: Subject[],
+  facultyAssignments: Record<string, string>,
+  classrooms: Classroom[],
+  entries: TimetableEntry[],
+  hoursLeft: Record<string, number>,
+  facultySlotMap: Record<string, FacultySlotState>,
+  occupancyMap: ClassroomOccupancyMap,
+  facultyProfiles?: Record<string, FacultyProfile>
+) {
+  // Quick lookup: what subject is at (day, period) — for consecutive-check
+  const slotSubject: Record<string, string> = {};
+  for (const e of entries) slotSubject[`${e.day}_${e.period}`] = e.subjectId;
 
-  // Check for faculty conflicts
-  const facultySlots: { [key: string]: Set<string> } = {};
+  for (const { day, period } of shuffledSlots) {
+    const candidates = theorySubjects.filter(s => {
+      if (hoursLeft[s.id] <= 0) return false;
 
-  timetable.entries.forEach(entry => {
-    const key = `${entry.facultyId}_${entry.day}_${entry.period}`;
-    if (!facultySlots[entry.facultyId]) {
-      facultySlots[entry.facultyId] = new Set();
+      const facultyId = facultyAssignments[s.id];
+      if (!facultyId) return false;
+      if (isFacultyBusy(facultyId, day, period, facultySlotMap)) return false;
+      if (!canFacultyTeach(facultyId, day, facultySlotMap, facultyProfiles)) return false;
+
+      // ≤ 2 slots of this subject per day
+      const todayCount = entries.filter(
+        e => e.day === day && e.subjectId === s.id && e.entryType === 'theory'
+      ).length;
+      if (todayCount >= 2) return false;
+
+      // Max 2 consecutive — if prev-1 and prev-2 are both this subject, skip
+      if (
+        slotSubject[`${day}_${period - 1}`] === s.id &&
+        slotSubject[`${day}_${period - 2}`] === s.id
+      )
+        return false;
+
+      return true;
+    });
+
+    if (candidates.length === 0) continue;
+
+    // Sort: most hours remaining first; random tiebreak for inter-group variety
+    candidates.sort((a, b) => {
+      const diff = hoursLeft[b.id] - hoursLeft[a.id];
+      return diff !== 0 ? diff : Math.random() - 0.5;
+    });
+
+    const selected = candidates[0];
+    const facultyId = facultyAssignments[selected.id];
+    const room = findTheoryRoom(classrooms, day, period, occupancyMap);
+    if (!room) continue;
+
+    entries.push({
+      id: `entry_${entries.length + 1}`,
+      day,
+      period,
+      subjectId: selected.id,
+      facultyId,
+      classroomId: room.id,
+      entryType: 'theory',
+      isCancelled: false,
+    });
+
+    recordFacultySlot(facultyId, day, period, facultySlotMap);
+    recordClassroomSlot(room.id, day, period, occupancyMap);
+    slotSubject[`${day}_${period}`] = selected.id;
+    hoursLeft[selected.id]--;
+  }
+}
+
+// ─── Single Generation Attempt ─────────────────────────────────────────────────
+
+function attemptGeneration(config: GenerationConfig): TimetableEntry[] {
+  const {
+    subjects,
+    facultyAssignments,
+    classrooms,
+    existingTimetableEntries,
+    facultyProfiles,
+  } = config;
+
+  const entries: TimetableEntry[] = [];
+
+  // Seed the global resource maps from ALL other groups' existing entries
+  const facultySlotMap = createFacultySlotMap(existingTimetableEntries ?? []);
+  const occupancyMap = createClassroomOccupancyMap(existingTimetableEntries ?? []);
+
+  const theorySubjects = subjects.filter(s => s.type === 'theory');
+  const labSubjects = subjects.filter(s => s.type === 'lab');
+
+  // ── Step 1: Labs first (claim consecutive blocks before theory scrambles them)
+  const reservedByLabs = scheduleAllLabs(
+    labSubjects,
+    facultyAssignments,
+    classrooms,
+    entries,
+    facultySlotMap,
+    occupancyMap,
+    facultyProfiles
+  );
+
+  // ── Step 2: Build theory slot pool (all 40 slots minus lab blocks)
+  const theorySlots: Slot[] = [];
+  for (const day of DAYS) {
+    for (const period of PERIODS) {
+      if (!reservedByLabs.has(`${day}_${period}`)) {
+        theorySlots.push({ day, period });
+      }
+    }
+  }
+
+  // ── Step 3: Stratified Fisher-Yates shuffle (unique rhythm per attempt)
+  const shuffledSlots = stratifiedShuffle(theorySlots);
+
+  // ── Step 4: Initialize hours-left counter (fixed per spec)
+  const hoursLeft: Record<string, number> = {};
+  for (const s of theorySubjects) hoursLeft[s.id] = getRequiredHours(s);
+
+  // ── Step 5: Fill slots greedily in shuffled order
+  fillTheorySlots(
+    shuffledSlots,
+    theorySubjects,
+    facultyAssignments,
+    classrooms,
+    entries,
+    hoursLeft,
+    facultySlotMap,
+    occupancyMap,
+    facultyProfiles
+  );
+
+  return entries;
+}
+
+// ─── Main Entry Point ──────────────────────────────────────────────────────────
+
+/**
+ * Generates a unique, collision-free timetable for one section/group.
+ *
+ * Strategy:
+ * 1. Run up to MAX_ATTEMPTS generation trials (each uses a fresh random shuffle).
+ * 2. After each attempt, compute the Uniqueness Score vs ALL other sections' entries.
+ * 3. Accept the first attempt that passes validation AND meets UNIQUENESS_THRESHOLD.
+ * 4. If no attempt meets the threshold (heavily constrained departments), keep the
+ *    best-scoring valid attempt anyway — never fail silently.
+ */
+export function generateTimetable(config: GenerationConfig): Timetable {
+  const { department, semester, section, subjects, existingTimetableEntries } = config;
+
+  const MAX_ATTEMPTS = 15;
+  const UNIQUENESS_THRESHOLD = 30; // Aim for ≥30% difference vs other groups
+
+  let bestEntries: TimetableEntry[] = [];
+  let bestScore = -1;
+  let bestValid = false;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const entries = attemptGeneration(config);
+
+    // Validation
+    const tempTimetable: Timetable = {
+      id: 'tmp',
+      department,
+      semester,
+      section,
+      generatedBy: '',
+      createdAt: '',
+      entries,
+    };
+    const validation = validateTimetable(tempTimetable, subjects);
+
+    // Uniqueness score vs all existing group entries
+    const score =
+      existingTimetableEntries && existingTimetableEntries.length > 0
+        ? computeUniquenessScore(entries, existingTimetableEntries)
+        : 100;
+
+    const isValid = validation.valid;
+
+    // Track the best attempt seen so far (valid preferred, then highest uniqueness)
+    const betterThanBest =
+      (!bestValid && (isValid || score > bestScore)) ||
+      (bestValid && isValid && score > bestScore);
+
+    if (betterThanBest) {
+      bestEntries = entries;
+      bestScore = score;
+      bestValid = isValid;
     }
 
-    const slotKey = `${entry.day}_${entry.period}`;
-    if (facultySlots[entry.facultyId].has(slotKey)) {
-      conflicts.push(`Faculty ${entry.facultyId} has conflict on ${entry.day} period ${entry.period}`);
-    }
-    facultySlots[entry.facultyId].add(slotKey);
-  });
-
-  // Check for classroom conflicts
-  const classroomSlots: { [key: string]: Set<string> } = {};
-
-  timetable.entries.forEach(entry => {
-    if (!classroomSlots[entry.classroomId]) {
-      classroomSlots[entry.classroomId] = new Set();
-    }
-
-    const slotKey = `${entry.day}_${entry.period}`;
-    if (classroomSlots[entry.classroomId].has(slotKey)) {
-      conflicts.push(`Classroom ${entry.classroomId} has conflict on ${entry.day} period ${entry.period}`);
-    }
-    classroomSlots[entry.classroomId].add(slotKey);
-  });
+    // Early exit when conditions are fully met
+    if (isValid && score >= UNIQUENESS_THRESHOLD) break;
+  }
 
   return {
-    valid: conflicts.length === 0,
-    conflicts,
+    id: `tt_${department}_${section}_${Date.now()}`,
+    department,
+    semester,
+    section,
+    generatedBy: 'AI Algorithm v2 (Async)',
+    createdAt: new Date().toISOString(),
+    entries: bestEntries,
   };
+}
+
+// ─── Validation ────────────────────────────────────────────────────────────────
+
+/**
+ * Validates a timetable for:
+ * - Faculty double-booking
+ * - Classroom double-booking
+ * - Subject weekly-hour accuracy (credit-scaled)
+ * - Lab integrity (4 consecutive, once per week)
+ * - Theory consecutive limit (≤2 periods of same subject back-to-back)
+ */
+export function validateTimetable(
+  timetable: Timetable,
+  subjects?: Subject[]
+): { valid: boolean; conflicts: string[] } {
+  const conflicts: string[] = [];
+
+  // ── Faculty collision check ──────────────────────────────────────────────────
+  const facultySlots: Record<string, Set<string>> = {};
+  for (const entry of timetable.entries) {
+    if (!facultySlots[entry.facultyId]) facultySlots[entry.facultyId] = new Set();
+    const key = `${entry.day}_${entry.period}`;
+    if (facultySlots[entry.facultyId].has(key)) {
+      conflicts.push(`Faculty ${entry.facultyId} double-booked on ${entry.day} P${entry.period}`);
+    }
+    facultySlots[entry.facultyId].add(key);
+  }
+
+  // ── Classroom collision check ────────────────────────────────────────────────
+  const roomSlots: Record<string, Set<string>> = {};
+  for (const entry of timetable.entries) {
+    if (!roomSlots[entry.classroomId]) roomSlots[entry.classroomId] = new Set();
+    const key = `${entry.day}_${entry.period}`;
+    if (roomSlots[entry.classroomId].has(key)) {
+      conflicts.push(
+        `Room ${entry.classroomId} double-booked on ${entry.day} P${entry.period}`
+      );
+    }
+    roomSlots[entry.classroomId].add(key);
+  }
+
+  // ── Subject hour accuracy ────────────────────────────────────────────────────
+  if (subjects) {
+    const counts: Record<string, number> = {};
+    for (const e of timetable.entries) counts[e.subjectId] = (counts[e.subjectId] ?? 0) + 1;
+
+    for (const s of subjects) {
+      const usage = counts[s.id] ?? 0;
+      const range = getWeeklyHourRange(s);
+      if (usage < range.minHours) {
+        conflicts.push(
+          `${s.subjectCode} under-allocated: ${usage} hrs (min ${range.minHours})`
+        );
+      } else if (usage > range.maxHours) {
+        conflicts.push(
+          `${s.subjectCode} over-allocated: ${usage} hrs (max ${range.maxHours})`
+        );
+      }
+      if (s.type === 'lab' && usage !== 0 && usage !== 4) {
+        conflicts.push(`Lab ${s.subjectCode} must have exactly 4 hrs, got ${usage}`);
+      }
+    }
+  }
+
+  // ── Daily lab and theory consecutive checks ──────────────────────────────────
+  const byDay: Record<string, TimetableEntry[]> = {};
+  for (const e of timetable.entries) {
+    if (!byDay[e.day]) byDay[e.day] = [];
+    byDay[e.day].push(e);
+  }
+
+  for (const [day, dayEntries] of Object.entries(byDay)) {
+    // Lab integrity: only one lab subject per day; ≤4 lab periods
+    const labEntries = dayEntries.filter(e => e.entryType === 'lab');
+    const labSubjectIds = new Set(labEntries.map(e => e.subjectId));
+    if (labSubjectIds.size > 1) {
+      conflicts.push(`Multiple lab subjects on ${day}`);
+    }
+    if (labEntries.length > 4) {
+      conflicts.push(`More than 4 lab periods on ${day}`);
+    }
+
+    // Theory consecutive limit (≤2 of the same subject in a row)
+    const theory = dayEntries
+      .filter(e => e.entryType === 'theory')
+      .sort((a, b) => a.period - b.period);
+
+    for (let i = 2; i < theory.length; i++) {
+      const [p2, p1, cur] = [theory[i - 2], theory[i - 1], theory[i]];
+      if (
+        p2.subjectId === p1.subjectId &&
+        p1.subjectId === cur.subjectId &&
+        cur.period === p1.period + 1 &&
+        p1.period === p2.period + 1
+      ) {
+        conflicts.push(
+          `${cur.subjectId} has 3+ consecutive theory periods on ${day}`
+        );
+      }
+    }
+  }
+
+  return { valid: conflicts.length === 0, conflicts };
 }

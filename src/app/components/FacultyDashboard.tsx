@@ -19,11 +19,10 @@ import {
   DAYS,
   PERIODS,
   PERIOD_TIMINGS,
-  TIMETABLES,
   TimetableEntry,
 } from '../data/mockData';
 import { exportFacultyToPDF } from '../utils/exportUtils';
-import { fetchTimetableForSection } from '../utils/api';
+import { fetchTimetableForFaculty, fetchAllTimetables } from '../utils/api';
 import { loadLocalTimetable } from '../utils/storage';
 
 type TabType = 'home' | 'my-timetable' | 'other-faculty' | 'class-timetable';
@@ -48,20 +47,43 @@ export default function FacultyDashboard() {
   const [selectedEntry, setSelectedEntry] = useState<TimetableEntry | null>(null);
   const [cancelReason, setCancelReason] = useState('');
 
+  // Timetable loading state
+  const [timetables, setTimetables] = useState<any[]>([]);
+  const [allTimetables, setAllTimetables] = useState<any[]>([]);
+  const [loadingTimetable, setLoadingTimetable] = useState(true);
+
   // Local state to track cancellations
   const [cancelledClasses, setCancelledClasses] = useState<Set<string>>(new Set());
 
+  const loadSchedules = async () => {
+    if (!faculty) {
+      setLoadingTimetable(false);
+      return;
+    }
+
+    setLoadingTimetable(true);
+    try {
+      const [fetchedTimetables, fetchedAllTimetables] = await Promise.all([
+        fetchTimetableForFaculty(faculty.id),
+        fetchAllTimetables(),
+      ]);
+
+      if (Array.isArray(fetchedTimetables)) {
+        setTimetables(fetchedTimetables);
+      }
+      if (Array.isArray(fetchedAllTimetables)) {
+        setAllTimetables(fetchedAllTimetables);
+      }
+    } catch (error) {
+      console.warn('Unable to load timetable data from backend:', error);
+    } finally {
+      setLoadingTimetable(false);
+    }
+  };
+
   useEffect(() => {
-    if (!faculty) return;
-    const myEntries: TimetableEntry[] = [];
-    TIMETABLES.forEach(tt => {
-      tt.entries.forEach(entry => {
-        if (entry.facultyId === faculty.id) {
-          myEntries.push(entry);
-        }
-      });
-    });
-  }, [faculty]);
+    loadSchedules();
+  }, [faculty, activeTab, selectedFacultyId, selectedClassDept, selectedSection]);
 
   const handleLogout = () => {
     logout();
@@ -79,9 +101,10 @@ export default function FacultyDashboard() {
   // Get faculty's timetable
   const getFacultyTimetable = () => {
     const entries: (TimetableEntry & { section: string })[] = [];
+    const timetableSource = timetables.length > 0 ? timetables : allTimetables;
 
-    TIMETABLES.forEach(tt => {
-      tt.entries.forEach(entry => {
+    timetableSource.forEach(tt => {
+      tt.entries.forEach((entry: TimetableEntry) => {
         if (entry.facultyId === faculty.id) {
           entries.push({ ...entry, section: tt.section });
         }
@@ -384,8 +407,8 @@ export default function FacultyDashboard() {
       if (!selectedFacultyId) return [];
 
       const entries: (TimetableEntry & { section: string })[] = [];
-      TIMETABLES.forEach(tt => {
-        tt.entries.forEach(entry => {
+      allTimetables.forEach(tt => {
+        tt.entries.forEach((entry: TimetableEntry) => {
           if (entry.facultyId === selectedFacultyId) {
             entries.push({ ...entry, section: tt.section });
           }
@@ -490,7 +513,7 @@ export default function FacultyDashboard() {
 
   const renderClassTimetable = () => {
     const sections = selectedClassDept === 'CSE' ? ['CSE G1', 'CSE G2'] : ['IT G1', 'IT G2'];
-    const timetable = TIMETABLES.find(tt => tt.department === selectedClassDept && tt.section === selectedSection);
+    const timetable = allTimetables.find(tt => tt.department === selectedClassDept && tt.section === selectedSection);
 
     return (
       <div className="space-y-6">

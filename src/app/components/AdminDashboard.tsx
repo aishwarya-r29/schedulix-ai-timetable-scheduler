@@ -39,7 +39,7 @@ import {
   getTimetableForSection,
 } from '../data/mockData';
 import { generateTimetable, validateTimetable } from '../utils/timetableGenerator';
-import { fetchTimetableForSection, saveTimetable } from '../utils/api';
+import { fetchFaculties, fetchSubjects, fetchClassrooms, fetchTimetableForSection, saveTimetable } from '../utils/api';
 import { loadLocalTimetable, saveLocalTimetable } from '../utils/storage';
 import { exportToPDF, exportToExcel } from '../utils/exportUtils';
 
@@ -61,6 +61,58 @@ export default function AdminDashboard() {
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [subjectForm, setSubjectForm] = useState({
+    id: '',
+    subjectName: '',
+    subjectCode: '',
+    credits: 4,
+    department: 'CSE' as 'CSE' | 'IT',
+    semester: 4,
+    assignedFaculty: [] as string[],
+    type: 'theory' as 'theory' | 'lab',
+  });
+
+  const resetSubjectForm = () => setSubjectForm({
+    id: '',
+    subjectName: '',
+    subjectCode: '',
+    credits: 4,
+    department: 'CSE',
+    semester: 4,
+    assignedFaculty: [],
+    type: 'theory',
+  });
+
+  const handleSaveSubject = () => {
+    const trimmedName = subjectForm.subjectName.trim();
+    const trimmedCode = subjectForm.subjectCode.trim();
+
+    if (!trimmedName || !trimmedCode) {
+      alert('Subject name and code are required.');
+      return;
+    }
+
+    const newSubject = {
+      ...subjectForm,
+      id: modalMode === 'add' ? trimmedCode : subjectForm.id,
+      subjectName: trimmedName,
+      subjectCode: trimmedCode,
+      assignedFaculty: subjectForm.assignedFaculty || [],
+    };
+
+    if (modalMode === 'add') {
+      if (subjects.some(s => s.id === newSubject.id || s.subjectCode === newSubject.subjectCode)) {
+        alert('A subject with this code already exists.');
+        return;
+      }
+      setSubjects([...subjects, newSubject]);
+    } else {
+      setSubjects(subjects.map(s => (s.id === newSubject.id ? newSubject : s)));
+    }
+
+    setShowModal(false);
+    resetSubjectForm();
+  };
 
   // Search states
   const [searchTerm, setSearchTerm] = useState('');
@@ -77,11 +129,34 @@ export default function AdminDashboard() {
   const [viewSection, setViewSection] = useState('CSE G1');
   const [viewTimetable, setViewTimetable] = useState<Timetable | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [loadingData, setLoadingData] = useState(true);
 
   const handleLogout = () => {
     logout();
     navigate('/');
   };
+
+  useEffect(() => {
+    const fetchBackendData = async () => {
+      try {
+        const [apiFaculties, apiSubjects, apiClassrooms] = await Promise.all([
+          fetchFaculties(),
+          fetchSubjects(),
+          fetchClassrooms(),
+        ]);
+
+        if (apiFaculties?.length) setFaculties(apiFaculties);
+        if (apiSubjects?.length) setSubjects(apiSubjects);
+        if (apiClassrooms?.length) setClassrooms(apiClassrooms);
+      } catch (error) {
+        console.warn('Backend data fetch failed, using frontend mock data:', error);
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    fetchBackendData();
+  }, []);
 
   const loadSectionTimetable = async (department: 'CSE' | 'IT', section: string) => {
     setViewLoading(true);
@@ -389,6 +464,7 @@ export default function AdminDashboard() {
         </div>
         <button
           onClick={() => {
+            resetSubjectForm();
             setModalMode('add');
             setSelectedItem(null);
             setShowModal(true);
@@ -421,6 +497,38 @@ export default function AdminDashboard() {
                 <div className="text-sm text-slate-400">
                   Faculty: {subject.assignedFaculty.length} assigned
                 </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => {
+                      setModalMode('edit');
+                      setSelectedItem(subject);
+                      setSubjectForm({
+                        id: subject.id,
+                        subjectName: subject.subjectName,
+                        subjectCode: subject.subjectCode,
+                        credits: subject.credits,
+                        department: subject.department,
+                        semester: subject.semester,
+                        assignedFaculty: subject.assignedFaculty,
+                        type: subject.type,
+                      });
+                      setShowModal(true);
+                    }}
+                    className="px-2 py-1 bg-white/10 text-white rounded-md text-xs hover:bg-white/20"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete ${subject.subjectName}?`)) {
+                        setSubjects(subjects.filter(s => s.id !== subject.id));
+                      }
+                    }}
+                    className="px-2 py-1 bg-red-500/10 text-red-300 rounded-md text-xs hover:bg-red-500/20"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -445,6 +553,38 @@ export default function AdminDashboard() {
                 </div>
                 <div className="text-sm text-slate-400">
                   Faculty: {subject.assignedFaculty.length} assigned
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => {
+                      setModalMode('edit');
+                      setSelectedItem(subject);
+                      setSubjectForm({
+                        id: subject.id,
+                        subjectName: subject.subjectName,
+                        subjectCode: subject.subjectCode,
+                        credits: subject.credits,
+                        department: subject.department,
+                        semester: subject.semester,
+                        assignedFaculty: subject.assignedFaculty,
+                        type: subject.type,
+                      });
+                      setShowModal(true);
+                    }}
+                    className="px-2 py-1 bg-white/10 text-white rounded-md text-xs hover:bg-white/20"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete ${subject.subjectName}?`)) {
+                        setSubjects(subjects.filter(s => s.id !== subject.id));
+                      }
+                    }}
+                    className="px-2 py-1 bg-red-500/10 text-red-300 rounded-md text-xs hover:bg-red-500/20"
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             ))}
@@ -656,6 +796,28 @@ export default function AdminDashboard() {
 
       console.log('Generating timetable with faculty assignments:', facultyAssignments);
 
+      const otherSection = genSection.endsWith('G1') ? `${genDept} G2` : `${genDept} G1`;
+      let existingTimetableEntries: any[] = [];
+
+      const localOtherTimetable = loadLocalTimetable(genDept, otherSection) || getTimetableForSection(genDept, otherSection);
+      if (localOtherTimetable?.entries) {
+        existingTimetableEntries = localOtherTimetable.entries;
+      }
+
+      try {
+        const remoteOtherTimetable = await fetchTimetableForSection(genDept, otherSection);
+        if (remoteOtherTimetable?.entries?.length) {
+          existingTimetableEntries = remoteOtherTimetable.entries;
+        }
+      } catch (error) {
+        console.warn(`Unable to fetch ${otherSection} timetable for cross-group validation:`, error);
+      }
+
+      const facultyProfiles = faculties.reduce((map, faculty) => {
+        map[faculty.id] = { isHOD: !!faculty.isHOD, maxDailySlots: faculty.isHOD ? 3 : 5 };
+        return map;
+      }, {} as { [facultyId: string]: { isHOD?: boolean; maxDailySlots?: number } });
+
       const timetable = generateTimetable({
         department: genDept,
         semester: genSem,
@@ -663,6 +825,8 @@ export default function AdminDashboard() {
         subjects: sectionSubjects,
         facultyAssignments,
         classrooms,
+        existingTimetableEntries,
+        facultyProfiles,
       });
 
       console.log('Generated timetable entries:', timetable.entries.map(e => ({
@@ -798,9 +962,16 @@ export default function AdminDashboard() {
                       className="w-64 px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
                       <option value="">Select Faculty</option>
-                      {faculties.filter(f => f.department === genDept && f.subjects.includes(subject.id)).map(faculty => (
-                        <option key={faculty.id} value={faculty.id}>{faculty.name}</option>
-                      ))}
+                      {faculties
+                        .filter(f => f.department === genDept)
+                        .sort((a, b) => {
+                          const aAssigned = subject.assignedFaculty?.includes(a.id) ? 0 : 1;
+                          const bAssigned = subject.assignedFaculty?.includes(b.id) ? 0 : 1;
+                          return aAssigned - bAssigned;
+                        })
+                        .map(faculty => (
+                          <option key={faculty.id} value={faculty.id}>{faculty.name}</option>
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -924,6 +1095,106 @@ export default function AdminDashboard() {
           {activeTab === 'generate' && renderGenerateTimetable()}
         </div>
       </main>
+      {showModal && activeTab === 'subjects' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl rounded-3xl bg-slate-950 border border-white/10 p-8 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">{modalMode === 'add' ? 'Add Subject' : 'Edit Subject'}</h2>
+                <p className="text-slate-400 text-sm">Enter the subject details below.</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  resetSubjectForm();
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Name</span>
+                <input
+                  value={subjectForm.subjectName}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, subjectName: e.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Code</span>
+                <input
+                  value={subjectForm.subjectCode}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, subjectCode: e.target.value })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Department</span>
+                <select
+                  value={subjectForm.department}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, department: e.target.value as 'CSE' | 'IT' })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                >
+                  <option value="CSE">CSE</option>
+                  <option value="IT">IT</option>
+                </select>
+              </label>
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Type</span>
+                <select
+                  value={subjectForm.type}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, type: e.target.value as 'theory' | 'lab' })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                >
+                  <option value="theory">Theory</option>
+                  <option value="lab">Lab</option>
+                </select>
+              </label>
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Credits</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={subjectForm.credits}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, credits: Number(e.target.value) })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                />
+              </label>
+              <label className="space-y-2 text-sm text-slate-300">
+                <span>Semester</span>
+                <select
+                  value={subjectForm.semester}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, semester: Number(e.target.value) })}
+                  className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
+                >
+                  <option value={4}>4</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-8 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowModal(false);
+                  resetSubjectForm();
+                }}
+                className="rounded-xl border border-white/10 px-5 py-3 text-sm text-slate-300 hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSubject}
+                className="rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 px-5 py-3 text-sm font-semibold text-white hover:shadow-lg"
+              >
+                Save Subject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

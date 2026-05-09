@@ -28,8 +28,27 @@ export async function fetchUserById(userId: string) {
   return apiRequest(`/api/users/${encodeURIComponent(userId)}`);
 }
 
+export async function fetchFaculties(department?: string) {
+  return apiRequest(`/api/faculties${department ? `?department=${encodeURIComponent(department)}` : ''}`);
+}
+
+export async function fetchStudents(department?: string, section?: string) {
+  const query = [];
+  if (department) query.push(`department=${encodeURIComponent(department)}`);
+  if (section) query.push(`section=${encodeURIComponent(section)}`);
+  return apiRequest(`/api/students${query.length ? `?${query.join('&')}` : ''}`);
+}
+
 export async function fetchTimetableForSection(department: string, section: string) {
   return apiRequest(`/api/timetables?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}`);
+}
+
+export async function fetchTimetableForFaculty(facultyId: string) {
+  return apiRequest(`/api/timetables?facultyId=${encodeURIComponent(facultyId)}`);
+}
+
+export async function fetchAllTimetables() {
+  return apiRequest('/api/timetables');
 }
 
 export async function saveTimetable(timetable: unknown) {

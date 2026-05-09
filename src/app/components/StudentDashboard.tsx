@@ -29,7 +29,8 @@ export default function StudentDashboard() {
   const navigate = useNavigate();
 
   const student = getStudentByUserId(user?.id || '');
-  const [savedTimetable, setSavedTimetable] = useState<any>(null);
+  const [sectionTimetable, setSectionTimetable] = useState<any>(null);
+  const [loadingTimetable, setLoadingTimetable] = useState(true);
 
   const displayName = user?.name || student?.name || 'Student';
   const displayRollNumber = student?.rollNumber || user?.email || '---';
@@ -45,23 +46,27 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!student) return;
 
+    setLoadingTimetable(true);
     const localTimetable = loadLocalTimetable(student.department, student.section);
     if (localTimetable) {
-      setSavedTimetable(localTimetable);
+      setSectionTimetable(localTimetable);
     }
 
     fetchTimetableForSection(student.department, student.section)
       .then((result) => {
-        if (result) {
-          setSavedTimetable(result);
+        if (result && result.entries && result.entries.length > 0) {
+          setSectionTimetable(result);
         }
       })
       .catch(() => {
-        // Leave the local timetable if available
+        // Keep local timetable if backend fetch fails
+      })
+      .finally(() => {
+        setLoadingTimetable(false);
       });
   }, [student]);
 
-  const timetable = savedTimetable || (student ? getTimetableForSection(student.department, student.section) : null);
+  const timetable = sectionTimetable || (student ? getTimetableForSection(student.department, student.section) : null);
   const sectionSubjects = student
     ? SUBJECTS.filter(s => s.department === student.department && s.semester === student.semester)
     : [];
@@ -172,7 +177,7 @@ export default function StudentDashboard() {
               <p className="text-slate-400">Weekly class schedule for {student.section}</p>
             </div>
 
-            {timetable && (
+            {timetable ? (
               <div className="flex gap-2">
                 <button
                   onClick={() => exportToPDF(timetable)}
@@ -189,10 +194,15 @@ export default function StudentDashboard() {
                   Excel
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
 
-          {timetable ? (
+          {loadingTimetable ? (
+            <div className="p-12 text-center">
+              <div className="mx-auto mb-4 h-12 w-12 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"></div>
+              <p className="text-slate-400">Loading generated timetable...</p>
+            </div>
+          ) : timetable ? (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-white/10">

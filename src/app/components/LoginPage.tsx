@@ -48,8 +48,15 @@ export default function LoginPage() {
     const success = await login(email, password);
 
     if (success) {
-      // Navigate to appropriate dashboard
-      navigate(`/${role}/dashboard`);
+      const storedUser = JSON.parse(localStorage.getItem('schedulix_user') || 'null');
+      const targetRole = storedUser?.role || role;
+      const destination = targetRole === 'admin'
+        ? '/admin/dashboard'
+        : targetRole === 'faculty' || targetRole === 'hod'
+          ? '/faculty/dashboard'
+          : '/student/dashboard';
+
+      navigate(destination);
     } else {
       setError('Invalid email or password');
     }
