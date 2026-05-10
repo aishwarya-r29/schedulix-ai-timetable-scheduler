@@ -171,7 +171,14 @@ export default function ClassroomModule() {
                   <label className={LABEL}>Room Number *</label>
                   <input
                     value={form.classroomNumber}
-                    onChange={e => setForm(p => ({ ...p, classroomNumber: e.target.value }))}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setForm(p => ({
+                        ...p,
+                        classroomNumber: val,
+                        roomType: val.toUpperCase().startsWith('LAB') ? 'lab' : p.roomType
+                      }));
+                    }}
                     disabled={!!editId}
                     className={`${INPUT} ${editId ? 'opacity-50 cursor-not-allowed' : ''}`}
                     placeholder="CS-101 or LAB-301"
