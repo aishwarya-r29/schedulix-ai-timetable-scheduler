@@ -66,6 +66,16 @@ export default function DepartmentModule() {
         </button>
       </div>
 
+      {error && !modalOpen && (
+        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-between gap-3 text-red-400">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
+            <p className="text-sm">{error}</p>
+          </div>
+          <button onClick={() => setError('')} className="text-red-400/50 hover:text-red-400"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {(departments || []).map((dept) => (
           <div key={dept.id} className="bg-white/5 border border-white/10 rounded-2xl p-5 hover:bg-white/8 transition-all group relative">
