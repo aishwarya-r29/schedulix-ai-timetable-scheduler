@@ -180,20 +180,27 @@ export default function AdminDashboard() {
   // Sync genDept/genSection and viewDept/viewSection when data loads or changes
   useEffect(() => {
     if (!loading && departments.length > 0) {
+      // Initialize genDept if not set
       if (!genDept) {
-        const firstDept = departments[0].id;
-        setGenDept(firstDept);
-        const firstGroup = groups.find(g => g.department === firstDept);
-        setGenSection(firstGroup?.id || '');
+        setGenDept(departments[0].id);
       }
+      
+      // If genDept is set but genSection is empty or invalid, try to pick the first available group
+      const deptGroups = groups.filter(g => g.department === genDept);
+      if (genDept && deptGroups.length > 0 && (!genSection || !deptGroups.some(g => g.id === genSection))) {
+        setGenSection(deptGroups[0].id);
+      }
+
+      // Same for view state
       if (!viewDept) {
-        const firstDept = departments[0].id;
-        setViewDept(firstDept);
-        const firstGroup = groups.find(g => g.department === firstDept);
-        setViewSection(firstGroup?.id || '');
+        setViewDept(departments[0].id);
+      }
+      const viewDeptGroups = groups.filter(g => g.department === viewDept);
+      if (viewDept && viewDeptGroups.length > 0 && (!viewSection || !viewDeptGroups.some(g => g.id === viewSection))) {
+        setViewSection(viewDeptGroups[0].id);
       }
     }
-  }, [loading, departments, groups, genDept, viewDept]);
+  }, [loading, departments, groups, genDept, viewDept, genSection, viewSection]);
 
   const loadSectionTimetable = async (department: string, section: string) => {
     setViewLoading(true);
@@ -580,11 +587,24 @@ export default function AdminDashboard() {
           setAlertMessage({ title: 'Validation Error', message: `No subjects found for ${genDept} Semester ${genSem}. Please add subjects first.`, variant: 'warning' });
           return;
         }
-
         // Validate all subjects have faculty assigned
         const unassignedSubjects = sectionSubjects.filter(s => !facultyAssignments[s.id]);
         if (unassignedSubjects.length > 0) {
           setAlertMessage({ title: 'Missing Faculty', message: `Cannot generate: Missing faculty assignment for ${unassignedSubjects.map(s => s.subjectCode).join(', ')}`, variant: 'warning' });
+          return;
+        }
+
+        // Check for classrooms
+        const theoryRooms = classrooms.filter(c => c.roomType === 'theory' && c.status === 'available');
+        const labRooms = classrooms.filter(c => c.roomType === 'lab' && c.status === 'available');
+
+        if (theoryRooms.length === 0 && sectionSubjects.some(s => s.type === 'theory')) {
+          setAlertMessage({ title: 'Classroom Conflict', message: 'No available theory classrooms found. Please add classrooms in the Classroom Management module.', variant: 'danger' });
+          return;
+        }
+
+        if (labRooms.length === 0 && sectionSubjects.some(s => s.type === 'lab')) {
+          setAlertMessage({ title: 'Classroom Conflict', message: 'No available lab classrooms found. Please add lab classrooms in the Classroom Management module.', variant: 'danger' });
           return;
         }
 

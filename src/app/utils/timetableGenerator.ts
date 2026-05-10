@@ -282,10 +282,8 @@ function scheduleAllLabs(
           // Slots not yet reserved by another lab this generation?
           if (!win.every(p => !reserved.has(`${day}_${p}`))) continue;
 
-          // Lab room available across all 4 periods?
           const room = findLabRoom(classrooms, day, win, occupancyMap);
-          if (!room) continue;
-
+          
           // ── Commit ──────────────────────────────────────────────────────────
           for (const period of win) {
             entries.push({
@@ -294,13 +292,13 @@ function scheduleAllLabs(
               period,
               subjectId: lab.id,
               facultyId,
-              classroomId: room.id,
+              classroomId: room?.id || '',
               entryType: 'lab',
               isCancelled: false,
             });
             reserved.add(`${day}_${period}`);
             recordFacultySlot(facultyId, day, period, facultySlotMap);
-            recordClassroomSlot(room.id, day, period, occupancyMap);
+            if (room) recordClassroomSlot(room.id, day, period, occupancyMap);
           }
           labDayUsed.add(day);
           placed = true;
@@ -376,21 +374,20 @@ function fillTheorySlots(
     const selected = candidates[0];
     const facultyId = facultyAssignments[selected.id];
     const room = findTheoryRoom(classrooms, day, period, occupancyMap);
-    if (!room) continue;
-
+    
     entries.push({
       id: `entry_${entries.length + 1}`,
       day,
       period,
       subjectId: selected.id,
       facultyId,
-      classroomId: room.id,
+      classroomId: room?.id || '',
       entryType: 'theory',
       isCancelled: false,
     });
 
     recordFacultySlot(facultyId, day, period, facultySlotMap);
-    recordClassroomSlot(room.id, day, period, occupancyMap);
+    if (room) recordClassroomSlot(room.id, day, period, occupancyMap);
     slotSubject[`${day}_${period}`] = selected.id;
     hoursLeft[selected.id]--;
   }
@@ -629,6 +626,12 @@ export function validateTimetable(
           `${cur.subjectId} has 3+ consecutive theory periods on ${day}`
         );
       }
+    }
+
+    // Classroom missing check
+    const missingClassroomEntries = dayEntries.filter(e => !e.classroomId);
+    if (missingClassroomEntries.length > 0) {
+      conflicts.push(`Classroom Conflict: ${missingClassroomEntries.length} periods on ${day} could not be assigned a room.`);
     }
   }
 
