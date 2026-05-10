@@ -280,11 +280,7 @@ export default function FacultyModule() {
       <ConfirmDialog
         open={!!confirmTarget}
         title="Delete Faculty"
-        message={confirmTarget ? (
-          timetables.some(tt => tt.entries.some(e => e.facultyId === confirmTarget.id))
-            ? `Warning: ${confirmTarget.name} appears in existing timetable(s). Those entries will become unresolvable.\n\nDelete anyway?`
-            : `Are you sure you want to delete ${confirmTarget.name}?`
-        ) : ''}
+        message={confirmTarget ? `Are you sure you want to delete ${confirmTarget.name}?` : ''}
         onConfirm={executeDelete}
         onCancel={() => setConfirmTarget(null)}
       />
