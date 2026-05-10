@@ -166,10 +166,16 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   }, [faculties, setFaculties]);
 
   const deleteFaculty = useCallback((id: string): string | null => {
+    const inUse = timetables.some(tt => tt.entries.some(e => e.facultyId === id));
+    if (inUse) {
+      const affected = timetables.filter(tt => tt.entries.some(e => e.facultyId === id));
+      const names = affected.map(tt => `${tt.department} ${tt.section}`).join(', ');
+      return `Faculty Deletion Error: This teacher is currently assigned to classes for: ${names}. You must re-assign another teacher to these subjects or regenerate the timetables before deleting this faculty member.`;
+    }
     setFaculties(faculties.filter(x => x.id !== id));
     deleteFacultyApi(id).catch(e => console.warn('Backend sync (delete faculty):', e));
     return null;
-  }, [faculties, setFaculties]);
+  }, [faculties, timetables, setFaculties]);
 
   // ── Student CRUD ──────────────────────────────────────────────────────────────
 

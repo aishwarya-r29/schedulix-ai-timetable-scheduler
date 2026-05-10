@@ -63,8 +63,14 @@ export default function FacultyModule() {
   const handleDelete = (f: Faculty) => setConfirmTarget(f);
 
   const executeDelete = () => {
-    if (confirmTarget) deleteFaculty(confirmTarget.id);
-    setConfirmTarget(null);
+    if (confirmTarget) {
+      const err = deleteFaculty(confirmTarget.id);
+      if (err) {
+        setError(err);
+      } else {
+        setConfirmTarget(null);
+      }
+    }
   };
 
   const toggleSlot = (slot: string) => {
@@ -91,6 +97,16 @@ export default function FacultyModule() {
         </div>
         <button onClick={openAdd} className={BTN_PRIMARY}><Plus className="w-4 h-4" />Add Faculty</button>
       </div>
+
+      {error && !modalOpen && (
+        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-between gap-3 text-red-400">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5" />
+            <p className="text-sm">{error}</p>
+          </div>
+          <button onClick={() => setError('')} className="text-red-400/50 hover:text-red-400"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
