@@ -20,7 +20,6 @@ import {
   DAYS,
   PERIODS,
   PERIOD_TIMINGS,
-  getTimetableForSection,
 } from '../data/mockData';
 import { fetchTimetableForSection } from '../utils/api';
 import { loadLocalTimetable } from '../utils/storage';
@@ -96,7 +95,7 @@ export default function StudentDashboard() {
     );
   }
 
-  const timetable = sectionTimetable || (student ? getTimetableForSection(student.department, student.section) : null);
+  const timetable = sectionTimetable;
   const sectionSubjects = student
     ? subjects.filter(s => s.department === student.department && s.semester === student.semester)
     : [];
