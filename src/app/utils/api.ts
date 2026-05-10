@@ -160,3 +160,8 @@ export async function deleteGroupApi(id: string) {
   });
 }
 
+export async function deleteTimetableApi(department: string, section: string) {
+  return apiRequest(`/api/timetables?department=${encodeURIComponent(department)}&section=${encodeURIComponent(section)}`, {
+    method: 'DELETE',
+  });
+}

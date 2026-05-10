@@ -161,6 +161,17 @@ app.post('/api/timetables', async (req, res) => {
     res.status(500).json({ error: 'Failed to store timetable' });
   }
 });
+app.delete('/api/timetables', async (req, res) => {
+  try {
+    const { department, section } = req.query;
+    if (!department || !section) return res.status(400).json({ error: 'Department and section are required.' });
+    console.log(`[Timetable] Deleting for ${department} ${section}...`);
+    const result = await timetablesCollection.deleteOne({ department, section });
+    res.json({ success: true, deletedCount: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── Faculties ─────────────────────────────────────────────────────────────────
 

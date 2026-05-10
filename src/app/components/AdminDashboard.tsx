@@ -610,25 +610,13 @@ export default function AdminDashboard() {
 
         console.log('Generating timetable with faculty assignments:', facultyAssignments);
 
-        const otherGroup = groups.find(g => g.department === genDept && g.id !== genSection);
-        const otherSection = otherGroup?.id || 'none';
-        let existingTimetableEntries: any[] = [];
+        // Aggregate ALL existing entries from ALL departments/sections for global resource locking
+        // This ensures no faculty or classroom is double-booked across the entire institution.
+        const existingTimetableEntries = timetables
+          .filter(tt => tt.department !== genDept || tt.section !== genSection)
+          .flatMap(tt => tt.entries || []);
 
-        const localOtherTimetable = timetables.find(t => t.department === genDept && t.section === otherSection);
-        if (localOtherTimetable?.entries) {
-          existingTimetableEntries = localOtherTimetable.entries;
-        }
-
-        if (otherSection !== 'none') {
-          try {
-            const remoteOtherTimetable = await fetchTimetableForSection(genDept, otherSection);
-            if (remoteOtherTimetable?.entries?.length) {
-              existingTimetableEntries = remoteOtherTimetable.entries;
-            }
-          } catch (error) {
-            console.warn(`Unable to fetch ${otherSection} timetable for cross-group validation:`, error);
-          }
-        }
+        console.log(`Global locking enabled: ${existingTimetableEntries.length} existing entries considered.`);
 
         const facultyProfiles = faculties.reduce((map, faculty) => {
           map[faculty.id] = { 
@@ -652,15 +640,18 @@ export default function AdminDashboard() {
 
         console.log('Generated timetable entries:', timetable.entries.length, 'entries');
 
-        const validation = validateTimetable(timetable, sectionSubjects);
+        const validation = validateTimetable(timetable, sectionSubjects, existingTimetableEntries);
 
         const saved = await saveTimetableToStore(timetable);
         
         if (!validation.valid) {
+          const hasFacultyConflict = validation.conflicts.some(c => c.toLowerCase().includes('faculty') || c.toLowerCase().includes('busy'));
           setAlertMessage({ 
-            title: 'Conflicts Detected', 
-            message: 'Timetable generation had conflicts:\n' + validation.conflicts.join('\n') + '\n\nThe timetable was saved locally but ' + (saved ? 'was also synced to DB.' : 'failed to sync to DB.'), 
-            variant: saved ? 'warning' : 'danger' 
+            title: 'Resource Conflicts Detected', 
+            message: 'Timetable generation had conflicts:\n' + validation.conflicts.join('\n') + 
+              (hasFacultyConflict ? '\n\nIMPORTANT: Some faculty members are already slotted in other classes. Consider adding/assigning another faculty member to these subjects.' : '') +
+              '\n\nThe timetable was saved locally but ' + (saved ? 'was also synced to DB.' : 'failed to sync to DB.'), 
+            variant: 'danger' 
           });
         } else if (saved) {
           setAlertMessage({ title: 'Success', message: 'Timetable generated and saved successfully to database!', variant: 'info' });

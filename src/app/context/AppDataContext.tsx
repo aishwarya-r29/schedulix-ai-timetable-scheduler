@@ -12,7 +12,7 @@ import {
   createClassroom as apiClassroomCreate, updateClassroomApi, deleteClassroomApi, fetchClassrooms,
   fetchDepartments, createDepartment as apiDepartmentCreate, deleteDepartmentApi,
   fetchGroups, createGroup as apiGroupCreate, deleteGroupApi,
-  fetchAllTimetables, saveTimetable,
+  fetchAllTimetables, saveTimetable, deleteTimetableApi,
 } from '../utils/api';
 import { saveLocalTimetable, load, persist, KEYS } from '../utils/storage';
 
@@ -285,11 +285,18 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteGroup = useCallback((id: string): string | null => {
     const g = groups.find(x => x.id === id);
-    if (g && g.studentIds.length > 0) return `Cannot delete: ${g.studentIds.length} students are still assigned to this group.`;
+    if (!g) return null;
+    if (g.studentIds.length > 0) return `Cannot delete: ${g.studentIds.length} students are still assigned to this group.`;
+    
     setGroups(groups.filter(x => x.id !== id));
     deleteGroupApi(id).catch(e => console.warn('Backend sync (delete group):', e));
+    
+    // Also delete any existing timetable for this group
+    setTimetablesState(prev => prev.filter(tt => tt.department !== g.department || tt.section !== g.name));
+    deleteTimetableApi(g.department, g.name).catch(() => null);
+    
     return null;
-  }, [groups, setGroups]);
+  }, [groups, setGroups, setTimetablesState]);
 
   // ── Department CRUD ───────────────────────────────────────────────────────────
 

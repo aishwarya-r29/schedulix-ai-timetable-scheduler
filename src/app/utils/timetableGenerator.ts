@@ -492,7 +492,7 @@ export function generateTimetable(config: GenerationConfig): Timetable {
       createdAt: '',
       entries,
     };
-    const validation = validateTimetable(tempTimetable, subjects);
+    const validation = validateTimetable(tempTimetable, subjects, existingTimetableEntries);
 
     // Uniqueness score vs all existing group entries
     const score =
@@ -540,9 +540,24 @@ export function generateTimetable(config: GenerationConfig): Timetable {
  */
 export function validateTimetable(
   timetable: Timetable,
-  subjects?: Subject[]
+  subjects: Subject[] = [],
+  existingEntries: TimetableEntry[] = []
 ): { valid: boolean; conflicts: string[] } {
   const conflicts: string[] = [];
+  const entries = timetable.entries || [];
+
+  // ── Global Collision Check ──────────────────────────────────────────────────
+  const globalBusyFaculty = new Set(existingEntries.map(e => `${e.facultyId}_${e.day}_${e.period}`));
+  const globalBusyRooms = new Set(existingEntries.map(e => `${e.classroomId}_${e.day}_${e.period}`));
+
+  entries.forEach(e => {
+    if (globalBusyFaculty.has(`${e.facultyId}_${e.day}_${e.period}`)) {
+      conflicts.push(`Global Faculty Conflict: Faculty member is already teaching another section on ${e.day} Period ${e.period}`);
+    }
+    if (e.classroomId && globalBusyRooms.has(`${e.classroomId}_${e.day}_${e.period}`)) {
+      conflicts.push(`Global Classroom Conflict: Room ${e.classroomId} is already occupied by another section on ${e.day} Period ${e.period}`);
+    }
+  });
 
   // ── Faculty collision check ──────────────────────────────────────────────────
   const facultySlots: Record<string, Set<string>> = {};
