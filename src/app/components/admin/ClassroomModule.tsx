@@ -59,8 +59,14 @@ export default function ClassroomModule() {
   const handleDelete = (c: Classroom) => setConfirmTarget(c);
 
   const executeDelete = () => {
-    if (confirmTarget) deleteClassroom(confirmTarget.id);
-    setConfirmTarget(null);
+    if (confirmTarget) {
+      const err = deleteClassroom(confirmTarget.id);
+      if (err) {
+        setError(err);
+      } else {
+        setConfirmTarget(null);
+      }
+    }
   };
 
   const statusColor = (s: string) =>

@@ -110,7 +110,13 @@ export default function DepartmentModule() {
                 {(groups || []).filter(g => g.department === dept.id).map(g => (
                   <div key={g.id} className="flex items-center gap-1 px-2 py-1 bg-white/5 border border-white/10 rounded-lg group/sec">
                     <span className="text-[10px] text-slate-300">{g.name}</span>
-                    <button onClick={() => deleteGroup(g.id)} className="opacity-0 group-hover/sec:opacity-100 hover:text-red-400 transition-all">
+                    <button 
+                      onClick={() => {
+                        const err = deleteGroup(g.id);
+                        if (err) setError(err);
+                      }} 
+                      className="opacity-0 group-hover/sec:opacity-100 hover:text-red-400 transition-all"
+                    >
                       <X className="w-2.5 h-2.5" />
                     </button>
                   </div>
@@ -231,10 +237,17 @@ export default function DepartmentModule() {
           title="Delete Department?"
           message={`Are you sure you want to delete the ${confirmTarget.name} department? This cannot be undone.`}
           onConfirm={() => {
-            deleteDepartment(confirmTarget.id);
-            setConfirmTarget(null);
+            const err = deleteDepartment(confirmTarget.id);
+            if (err) {
+              setError(err);
+            } else {
+              setConfirmTarget(null);
+            }
           }}
-          onCancel={() => setConfirmTarget(null)}
+          onCancel={() => {
+            setConfirmTarget(null);
+            setError('');
+          }}
           variant="danger"
         />
       )}

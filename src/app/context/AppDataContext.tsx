@@ -310,10 +310,12 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
 
   const deleteDepartment = useCallback((id: string): string | null => {
     if (id === 'CSE' || id === 'IT') return 'Core departments cannot be deleted.';
+    const hasGroups = groups.some(g => g.department === id);
+    if (hasGroups) return `Cannot delete: This department has ${groups.filter(g => g.department === id).length} active section(s)/group(s). Please delete them first.`;
     setDepts(departments.filter(x => x.id !== id));
     deleteDepartmentApi(id).catch(e => console.warn('Backend sync (delete department):', e));
     return null;
-  }, [departments, setDepts]);
+  }, [departments, groups, setDepts]);
 
   // ── Timetable Store ───────────────────────────────────────────────────────────
 
