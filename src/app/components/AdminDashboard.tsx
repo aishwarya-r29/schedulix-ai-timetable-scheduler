@@ -654,13 +654,19 @@ export default function AdminDashboard() {
 
         const validation = validateTimetable(timetable, sectionSubjects);
 
+        const saved = await saveTimetableToStore(timetable);
+        
         if (!validation.valid) {
-          setAlertMessage({ title: 'Conflicts Detected', message: 'Timetable generation had conflicts:\n' + validation.conflicts.join('\n') + '\n\nThe timetable was saved with best-effort results.', variant: 'warning' });
+          setAlertMessage({ 
+            title: 'Conflicts Detected', 
+            message: 'Timetable generation had conflicts:\n' + validation.conflicts.join('\n') + '\n\nThe timetable was saved locally but ' + (saved ? 'was also synced to DB.' : 'failed to sync to DB.'), 
+            variant: saved ? 'warning' : 'danger' 
+          });
+        } else if (saved) {
+          setAlertMessage({ title: 'Success', message: 'Timetable generated and saved successfully to database!', variant: 'info' });
         } else {
-          setAlertMessage({ title: 'Success', message: 'Timetable generated and saved successfully!', variant: 'info' });
+          setAlertMessage({ title: 'Sync Error', message: 'Timetable generated successfully but failed to save to the database. It is currently only available in your local session.', variant: 'danger' });
         }
-
-        saveTimetableToStore(timetable);
         setViewTimetable(timetable); // Update the view immediately
 
         setGenStep(1);

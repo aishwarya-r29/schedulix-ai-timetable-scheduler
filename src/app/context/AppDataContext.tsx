@@ -264,7 +264,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     const affected = timetables.filter(tt => tt.entries.some(e => e.classroomId === id));
     if (affected.length > 0) {
       const names = affected.map(tt => `${tt.department} ${tt.section}`).join(', ');
-      return `Cannot delete: This classroom is in use by ${affected.length} timetable(s) (${names}). Please regenerate these timetables before deleting the room.`;
+      return `Classroom Activity Conflict: This classroom cannot be deleted because it has scheduled activities for the following class group(s): ${names}. Deleting this classroom would leave blank slots in their schedules. Please regenerate the timetables for these groups before removing this classroom.`;
     }
     setClassrooms(classrooms.filter(x => x.id !== id));
     deleteClassroomApi(id).catch(e => console.warn('Backend sync (delete classroom):', e));
@@ -322,7 +322,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  const saveTimetableToStore = useCallback((tt: Timetable) => {
+  const saveTimetableToStore = useCallback(async (tt: Timetable) => {
     setTimetablesState(prev => {
       const idx = prev.findIndex(x => x.department === tt.department && x.section === tt.section);
       const next = [...prev];
@@ -330,9 +330,16 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       persist(KEYS.timetables, next);
       return next;
     });
-    saveTimetable(tt).catch(e => console.warn('Backend sync (save timetable):', e));
-    saveLocalTimetable(tt);
-  }, []);
+    
+    try {
+      await saveTimetable(tt);
+      saveLocalTimetable(tt);
+      return true;
+    } catch (e) {
+      console.error('CRITICAL: Backend sync (save timetable) failed:', e);
+      return false;
+    }
+  }, [setTimetablesState]);
 
   // Keep global TIMETABLES array in sync for legacy code that reads it directly
   useEffect(() => {
