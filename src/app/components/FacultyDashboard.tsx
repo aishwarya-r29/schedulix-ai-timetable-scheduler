@@ -131,7 +131,7 @@ export default function FacultyDashboard() {
   // Get faculty's timetable
   const getFacultyTimetable = () => {
     const entries: (TimetableEntry & { section: string })[] = [];
-    const timetableSource = timetables.length > 0 ? timetables : allTimetables;
+    const timetableSource = timetables;
 
     timetableSource.forEach(tt => {
       if (tt && tt.entries) {

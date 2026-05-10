@@ -59,6 +59,8 @@ export default function StudentDashboard() {
       .then((result) => {
         if (result && result.entries && result.entries.length > 0) {
           setSectionTimetable(result);
+        } else {
+          setSectionTimetable(null);
         }
       })
       .catch(() => {

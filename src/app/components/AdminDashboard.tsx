@@ -215,6 +215,8 @@ export default function AdminDashboard() {
       const remoteTimetable = await fetchTimetableForSection(department, section);
       if (remoteTimetable) {
         setViewTimetable(remoteTimetable);
+      } else {
+        setViewTimetable(null);
       }
     } catch (error) {
       console.warn('Unable to fetch timetable from backend:', error);
