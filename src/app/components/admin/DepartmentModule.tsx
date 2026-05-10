@@ -238,11 +238,8 @@ export default function DepartmentModule() {
           message={`Are you sure you want to delete the ${confirmTarget.name} department? This cannot be undone.`}
           onConfirm={() => {
             const err = deleteDepartment(confirmTarget.id);
-            if (err) {
-              setError(err);
-            } else {
-              setConfirmTarget(null);
-            }
+            setConfirmTarget(null);
+            if (err) setError(err);
           }}
           onCancel={() => {
             setConfirmTarget(null);

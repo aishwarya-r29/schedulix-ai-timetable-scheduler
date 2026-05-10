@@ -65,11 +65,8 @@ export default function FacultyModule() {
   const executeDelete = () => {
     if (confirmTarget) {
       const err = deleteFaculty(confirmTarget.id);
-      if (err) {
-        setError(err);
-      } else {
-        setConfirmTarget(null);
-      }
+      setConfirmTarget(null);
+      if (err) setError(err);
     }
   };
 

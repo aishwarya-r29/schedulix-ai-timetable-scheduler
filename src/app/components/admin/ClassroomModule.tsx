@@ -61,11 +61,8 @@ export default function ClassroomModule() {
   const executeDelete = () => {
     if (confirmTarget) {
       const err = deleteClassroom(confirmTarget.id);
-      if (err) {
-        setError(err);
-      } else {
-        setConfirmTarget(null);
-      }
+      setConfirmTarget(null);
+      if (err) setError(err);
     }
   };
 
