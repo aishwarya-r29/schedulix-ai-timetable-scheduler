@@ -261,10 +261,15 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   }, [classrooms, setClassrooms]);
 
   const deleteClassroom = useCallback((id: string): string | null => {
+    const affected = timetables.filter(tt => tt.entries.some(e => e.classroomId === id));
+    if (affected.length > 0) {
+      const names = affected.map(tt => `${tt.department} ${tt.section}`).join(', ');
+      return `Cannot delete: This classroom is in use by ${affected.length} timetable(s) (${names}). Please regenerate these timetables before deleting the room.`;
+    }
     setClassrooms(classrooms.filter(x => x.id !== id));
     deleteClassroomApi(id).catch(e => console.warn('Backend sync (delete classroom):', e));
     return null;
-  }, [classrooms, setClassrooms]);
+  }, [classrooms, timetables, setClassrooms]);
 
   // ── Group CRUD ────────────────────────────────────────────────────────────────
 

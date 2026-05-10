@@ -629,9 +629,14 @@ export function validateTimetable(
     }
 
     // Classroom missing check
-    const missingClassroomEntries = dayEntries.filter(e => !e.classroomId);
-    if (missingClassroomEntries.length > 0) {
-      conflicts.push(`Classroom Conflict: ${missingClassroomEntries.length} periods on ${day} could not be assigned a room.`);
+    const missingTheory = dayEntries.filter(e => !e.classroomId && e.entryType === 'theory');
+    const missingLab = dayEntries.filter(e => !e.classroomId && e.entryType === 'lab');
+    
+    if (missingTheory.length > 0) {
+      conflicts.push(`Classroom Conflict: ${missingTheory.length} Theory periods on ${day} could not be assigned a room (Theory rooms are full).`);
+    }
+    if (missingLab.length > 0) {
+      conflicts.push(`Classroom Conflict: ${missingLab.length} Lab periods on ${day} could not be assigned a room (Lab rooms are full).`);
     }
   }
 
