@@ -22,7 +22,8 @@ export default function FacultyModule() {
   const { 
     faculties = [], 
     subjects = [], 
-    departments = [], 
+    departments = [],
+    timetables = [],
     addFaculty, 
     updateFaculty, 
     deleteFaculty 
