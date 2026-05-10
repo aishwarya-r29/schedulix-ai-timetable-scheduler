@@ -255,7 +255,7 @@ export default function StudentDashboard() {
                         {day}
                       </td>
                       {PERIODS.slice(0, 8).map(period => {
-                        const entry = timetable.entries.find(e => e.day === day && e.period === period);
+                        const entry = timetable?.entries ? timetable.entries.find(e => e.day === day && e.period === period) : null;
                         const subject = entry ? subjects.find(s => s.id === entry.subjectId) : null;
                         const faculty = entry ? faculties.find(f => f.id === entry.facultyId) : null;
                         const classroom = entry ? classrooms.find(c => c.id === entry.classroomId) : null;
@@ -273,7 +273,9 @@ export default function StudentDashboard() {
                               <div className="space-y-1">
                                 <div className="font-semibold text-white">{subject?.subjectCode}</div>
                                 <div className="text-xs text-slate-300">{subject?.subjectName}</div>
-                                <div className="text-xs text-slate-400">{faculty?.name.split(' ').slice(-1)}</div>
+                                <div className="text-xs text-slate-400">
+                                  {faculty?.name ? faculty.name.split(' ').slice(-1) : 'N/A'}
+                                </div>
                                 <div className="text-xs text-slate-500">{classroom?.classroomNumber}</div>
                                 {entry.entryType === 'lab' && (
                                   <div className="inline-block px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-medium">

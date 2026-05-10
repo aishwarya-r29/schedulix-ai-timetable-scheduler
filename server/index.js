@@ -31,6 +31,7 @@ let classroomsCollection;
 let facultiesCollection;
 let studentsCollection;
 let departmentsCollection;
+let groupsCollection;
 
 async function connectDatabase() {
   const client = new MongoClient(MONGODB_URI);
@@ -43,6 +44,7 @@ async function connectDatabase() {
   facultiesCollection = db.collection('faculties');
   studentsCollection = db.collection('students');
   departmentsCollection = db.collection('departments');
+  groupsCollection = db.collection('groups');
 
   await seedCollections();
 }
@@ -82,6 +84,15 @@ async function seedCollections() {
   if (departmentsCount === 0) {
     await departmentsCollection.insertMany(DEPARTMENTS);
     console.log(`Seeded ${DEPARTMENTS.length} departments`);
+  }
+
+  const groupsCount = await groupsCollection.countDocuments();
+  if (groupsCount === 0) {
+    const { GROUPS } = await import('./seedData.js'); // Assuming GROUPS might be added to seedData
+    if (GROUPS) {
+      await groupsCollection.insertMany(GROUPS);
+      console.log(`Seeded ${GROUPS.length} groups`);
+    }
   }
 }
 
@@ -457,6 +468,43 @@ app.delete('/api/departments/:id', async (req, res) => {
     if (id === 'CSE' || id === 'IT') return res.status(403).json({ error: 'Core departments cannot be deleted.' });
     const result = await departmentsCollection.deleteOne({ id });
     if (result.deletedCount === 0) return res.status(404).json({ error: 'Department not found.' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Groups ──────────────────────────────────────────────────────────────────
+
+app.get('/api/groups', async (req, res) => {
+  try {
+    const groups = await groupsCollection.find({}).toArray();
+    res.json(groups);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/groups', async (req, res) => {
+  try {
+    const group = req.body;
+    if (!group.id || !group.name) return res.status(400).json({ error: 'ID and Name are required.' });
+    await groupsCollection.updateOne(
+      { id: group.id },
+      { $set: group },
+      { upsert: true }
+    );
+    res.status(201).json({ success: true, group });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/groups/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await groupsCollection.deleteOne({ id });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Group not found.' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

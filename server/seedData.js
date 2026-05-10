@@ -330,3 +330,9 @@ export const USERS = [
     group: student.group,
   })),
 ];
+export const GROUPS = [
+  { id: 'CSE G1', department: 'CSE', name: 'G1', semester: 4, studentIds: [] },
+  { id: 'CSE G2', department: 'CSE', name: 'G2', semester: 4, studentIds: [] },
+  { id: 'IT G1',  department: 'IT',  name: 'G1', semester: 4, studentIds: [] },
+  { id: 'IT G2',  department: 'IT',  name: 'G2', semester: 4, studentIds: [] },
+];

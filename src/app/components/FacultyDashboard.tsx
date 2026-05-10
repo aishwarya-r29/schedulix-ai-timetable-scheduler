@@ -34,7 +34,16 @@ export default function FacultyDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('home');
 
-  const { faculties = [], departments = [], groups = [], subjects: liveSubjects = [], classrooms: liveClassrooms = [], timetables: contextTimetables = [], refreshTimetables } = useAppData();
+  const { 
+    faculties = [], 
+    departments = [], 
+    groups = [], 
+    subjects: liveSubjects = [], 
+    classrooms: liveClassrooms = [], 
+    timetables: contextTimetables = [], 
+    refreshTimetables,
+    loading: contextLoading 
+  } = useAppData();
 
   const faculty = faculties.find(f => f.userId === user?.id);
 
@@ -125,14 +134,16 @@ export default function FacultyDashboard() {
     const timetableSource = timetables.length > 0 ? timetables : allTimetables;
 
     timetableSource.forEach(tt => {
-      tt.entries.forEach((entry: TimetableEntry) => {
-        const isIdMatch = entry.facultyId === faculty.id;
-        const isNameMatch = !isIdMatch && faculties.find(f => f.id === entry.facultyId)?.name === faculty.name;
+      if (tt && tt.entries) {
+        tt.entries.forEach((entry: TimetableEntry) => {
+          const isIdMatch = entry.facultyId === faculty.id;
+          const isNameMatch = !isIdMatch && faculties.find(f => f.id === entry.facultyId)?.name === faculty.name;
 
-        if (isIdMatch || isNameMatch) {
-          entries.push({ ...entry, section: tt.section });
-        }
-      });
+          if (isIdMatch || isNameMatch) {
+            entries.push({ ...entry, section: tt.section });
+          }
+        });
+      }
     });
 
     return entries;
@@ -616,7 +627,9 @@ export default function FacultyDashboard() {
                               ) : (
                                 <div>
                                   <div className="font-semibold text-white text-xs">{subject?.subjectCode}</div>
-                                  <div className="text-[10px] text-slate-400">{faculty?.name.split(' ').pop()}</div>
+                                  <div className="text-[10px] text-slate-400">
+                                    {faculty?.name ? faculty.name.split(' ').pop() : 'N/A'}
+                                  </div>
                                   <div className="text-[10px] text-slate-500">{classroom?.classroomNumber}</div>
                                 </div>
                               )

@@ -166,7 +166,7 @@ export async function exportToPDF(timetable: Timetable) {
         // Line 3 – "LastName | Room" (tiny, slate‑400 equivalent)
         doc.setFontSize(5.5);
         doc.setTextColor(148, 163, 184);
-        const lastName = faculty.name.split(' ').pop() ?? faculty.name;
+        const lastName = faculty.name ? faculty.name.split(' ').pop() ?? faculty.name : 'N/A';
         const roomLine = `${lastName} | ${classroom.classroomNumber}`;
         const roomTrunc = roomLine.length > 16 ? roomLine.slice(0, 15) + '…' : roomLine;
         doc.text(roomTrunc, x + dayColWidth / 2, curY + 14.5, { align: 'center' });
@@ -326,11 +326,14 @@ export function exportFacultyToPDF(facultyName: string, entries: any[], departme
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
         doc.setTextColor(30, 41, 59);
-        doc.text(entry.subject || '---', x + dayColWidth / 2, curY + 6, { align: 'center' });
+        doc.text(entry.subject || '---', x + dayColWidth / 2, curY + 5, { align: 'center' });
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
+        doc.setFontSize(6);
         doc.setTextColor(100, 116, 139);
-        doc.text(entry.section || '', x + dayColWidth / 2, curY + 12, { align: 'center' });
+        doc.text(entry.section || '', x + dayColWidth / 2, curY + 10, { align: 'center' });
+        doc.setFontSize(5.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text(entry.classroom || '', x + dayColWidth / 2, curY + 14.5, { align: 'center' });
       } else {
         doc.setTextColor(203, 213, 225);
         doc.setFont('helvetica', 'normal');

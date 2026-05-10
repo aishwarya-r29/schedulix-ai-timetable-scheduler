@@ -141,3 +141,22 @@ export async function deleteDepartmentApi(id: string) {
   });
 }
 
+// ─── Group CRUD ───────────────────────────────────────────────────────────────
+
+export async function fetchGroups() {
+  return apiRequest('/api/groups');
+}
+
+export async function createGroup(group: any) {
+  return apiRequest('/api/groups', {
+    method: 'POST',
+    body: JSON.stringify(group),
+  });
+}
+
+export async function deleteGroupApi(id: string) {
+  return apiRequest(`/api/groups/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+

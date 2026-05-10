@@ -124,7 +124,7 @@ export default function FacultyModule() {
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                        {f.name.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                        {f.name ? f.name.split(' ').map(n => n[0]).slice(0, 2).join('') : '??'}
                       </div>
                       <div>
                         <div className="text-sm font-semibold text-white">{f.name}</div>

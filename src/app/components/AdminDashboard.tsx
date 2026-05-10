@@ -177,6 +177,24 @@ export default function AdminDashboard() {
     setLoadingData(false);
   }, []);
 
+  // Sync genDept/genSection and viewDept/viewSection when data loads or changes
+  useEffect(() => {
+    if (!loading && departments.length > 0) {
+      if (!genDept) {
+        const firstDept = departments[0].id;
+        setGenDept(firstDept);
+        const firstGroup = groups.find(g => g.department === firstDept);
+        setGenSection(firstGroup?.id || '');
+      }
+      if (!viewDept) {
+        const firstDept = departments[0].id;
+        setViewDept(firstDept);
+        const firstGroup = groups.find(g => g.department === firstDept);
+        setViewSection(firstGroup?.id || '');
+      }
+    }
+  }, [loading, departments, groups, genDept, viewDept]);
+
   const loadSectionTimetable = async (department: string, section: string) => {
     setViewLoading(true);
     const localTimetable = timetables.find(t => t.department === department && t.section === section);
@@ -672,11 +690,12 @@ export default function AdminDashboard() {
                   onChange={(e) => {
                     const dept = e.target.value;
                     setGenDept(dept);
-                    const firstGroup = groups.find(g => g.department === dept);
-                    setGenSection(firstGroup?.id || '');
+                    const filteredGroups = groups.filter(g => g.department === dept);
+                    setGenSection(filteredGroups.length > 0 ? filteredGroups[0].id : '');
                   }}
                   className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
+                  <option value="" disabled>Select Department</option>
                   {departments.map(d => (
                     <option key={d.id} value={d.id}>{d.fullName || d.name} ({d.id})</option>
                   ))}
@@ -710,7 +729,17 @@ export default function AdminDashboard() {
               </div>
 
               <button
-                onClick={() => setGenStep(2)}
+                onClick={() => {
+                  if (!genDept || !genSection) {
+                    setAlertMessage({ 
+                      title: 'Selection Required', 
+                      message: 'Please select both a Department and a Section (Group) before proceeding. If no sections are available, please create one in the Department Management module.', 
+                      variant: 'warning' 
+                    });
+                    return;
+                  }
+                  setGenStep(2);
+                }}
                 className="w-full mt-6 px-6 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-lg hover:shadow-lg transition-all"
               >
                 Next: Assign Faculty

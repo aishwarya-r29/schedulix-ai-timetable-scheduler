@@ -11,6 +11,7 @@ import {
   createSubject as apiSubjectCreate, updateSubjectApi, deleteSubjectApi, fetchSubjects,
   createClassroom as apiClassroomCreate, updateClassroomApi, deleteClassroomApi, fetchClassrooms,
   fetchDepartments, createDepartment as apiDepartmentCreate, deleteDepartmentApi,
+  fetchGroups, createGroup as apiGroupCreate, deleteGroupApi,
   fetchAllTimetables, saveTimetable,
 } from '../utils/api';
 import { saveLocalTimetable, load, persist, KEYS } from '../utils/storage';
@@ -100,12 +101,13 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     setLoading(true);
     console.log('=== APP DATA CONTEXT: FETCHING INITIAL DATA FROM SERVER ===');
     try {
-      const [remoteFaculties, remoteStudents, remoteSubjects, remoteClassrooms, remoteDepartments, remoteTimetables] = await Promise.all([
+      const [remoteFaculties, remoteStudents, remoteSubjects, remoteClassrooms, remoteDepartments, remoteGroups, remoteTimetables] = await Promise.all([
         fetchFaculties().catch(() => null),
         fetchStudents().catch(() => null),
         fetchSubjects().catch(() => null),
         fetchClassrooms().catch(() => null),
         fetchDepartments().catch(() => null),
+        fetchGroups().catch(() => null),
         fetchAllTimetables().catch(() => null),
       ]);
 
@@ -114,6 +116,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       setSubjectsState(remoteSubjects || []);
       setClassroomsState(remoteClassrooms || []);
       setDepartmentsState(remoteDepartments || DEFAULT_DEPARTMENTS);
+      setGroupsState(remoteGroups || GROUPS);
       setTimetablesState(remoteTimetables || []);
       
       // Persist to local storage for quick subsequent loads
@@ -122,6 +125,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       if (remoteSubjects) persist(KEYS.subjects, remoteSubjects);
       if (remoteClassrooms) persist(KEYS.classrooms, remoteClassrooms);
       if (remoteDepartments) persist(KEYS.departments, remoteDepartments);
+      if (remoteGroups) persist(KEYS.groups, remoteGroups);
       if (remoteTimetables) persist(KEYS.timetables, remoteTimetables);
 
     } catch (e) {
@@ -268,7 +272,9 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!g.name.trim()) return 'Group name is required.';
     const id = `${g.department} ${g.name.trim()}`;
     if (groups.some(x => x.id === id)) return `Group "${id}" already exists.`;
-    setGroups([...groups, { ...g, id, name: g.name.trim(), studentIds: [] }]);
+    const newG = { ...g, id, name: g.name.trim(), studentIds: [] };
+    setGroups([...groups, newG]);
+    apiGroupCreate(newG).catch(e => console.warn('Backend sync (add group):', e));
     return null;
   }, [groups, setGroups]);
 
@@ -276,6 +282,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     const g = groups.find(x => x.id === id);
     if (g && g.studentIds.length > 0) return `Cannot delete: ${g.studentIds.length} students are still assigned to this group.`;
     setGroups(groups.filter(x => x.id !== id));
+    deleteGroupApi(id).catch(e => console.warn('Backend sync (delete group):', e));
     return null;
   }, [groups, setGroups]);
 
