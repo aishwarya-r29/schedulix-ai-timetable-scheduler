@@ -19,6 +19,7 @@ import {
   FileDown,
   Menu,
   Home,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -33,17 +34,19 @@ import {
   DAYS,
   PERIODS,
   PERIOD_TIMINGS,
-  TIMETABLES,
   Timetable,
-  addTimetable,
-  getTimetableForSection,
 } from '../data/mockData';
 import { generateTimetable, validateTimetable } from '../utils/timetableGenerator';
 import { fetchFaculties, fetchSubjects, fetchClassrooms, fetchTimetableForSection, saveTimetable } from '../utils/api';
-import { loadLocalTimetable, saveLocalTimetable } from '../utils/storage';
 import { exportToPDF, exportToExcel } from '../utils/exportUtils';
+import { useAppData } from '../context/AppDataContext';
+import FacultyModule from './admin/FacultyModule';
+import StudentModule from './admin/StudentModule';
+import ClassroomModule from './admin/ClassroomModule';
+import DepartmentModule from './admin/DepartmentModule';
+import ConfirmDialog from './ui/ConfirmDialog';
 
-type TabType = 'dashboard' | 'faculty' | 'students' | 'subjects' | 'classrooms' | 'timetable' | 'generate';
+type TabType = 'dashboard' | 'faculty' | 'students' | 'subjects' | 'classrooms' | 'timetable' | 'generate' | 'departments';
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -51,22 +54,47 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  // Local state for editable data
-  const [faculties, setFaculties] = useState<Faculty[]>(FACULTIES);
-  const [students, setStudents] = useState<Student[]>(STUDENTS);
-  const [subjects, setSubjects] = useState<Subject[]>(SUBJECTS);
-  const [classrooms, setClassrooms] = useState<Classroom[]>(CLASSROOMS);
+  // Use AppDataContext for all live CRUD-able data
+  const { 
+    faculties = [], 
+    students = [], 
+    subjects = [], 
+    classrooms = [], 
+    groups = [], 
+    departments = [], 
+    timetables = [], 
+    saveTimetableToStore, 
+    addSubject, 
+    updateSubject, 
+    deleteSubject,
+    loading
+  } = useAppData();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+          <p className="text-slate-400 animate-pulse">Initializing Dashboard Data...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [selectedItem, setSelectedItem] = useState<any>(null);
+  
+  // Custom dialog states
+  const [confirmTarget, setConfirmTarget] = useState<{ id: string, name: string, type: 'subject' } | null>(null);
+  const [alertMessage, setAlertMessage] = useState<{ title: string, message: string, variant: 'info' | 'danger' | 'warning' } | null>(null);
   const [subjectForm, setSubjectForm] = useState({
     id: '',
     subjectName: '',
     subjectCode: '',
     credits: 4,
-    department: 'CSE' as 'CSE' | 'IT',
+    department: departments[0]?.id || '' as string,
     semester: 4,
     assignedFaculty: [] as string[],
     type: 'theory' as 'theory' | 'lab',
@@ -77,7 +105,7 @@ export default function AdminDashboard() {
     subjectName: '',
     subjectCode: '',
     credits: 4,
-    department: 'CSE',
+    department: departments[0]?.id || '',
     semester: 4,
     assignedFaculty: [],
     type: 'theory',
@@ -88,11 +116,11 @@ export default function AdminDashboard() {
     const trimmedCode = subjectForm.subjectCode.trim();
 
     if (!trimmedName || !trimmedCode) {
-      alert('Subject name and code are required.');
+      setAlertMessage({ title: 'Validation Error', message: 'Subject name and code are required.', variant: 'warning' });
       return;
     }
 
-    const newSubject = {
+    const subjectPayload = {
       ...subjectForm,
       id: modalMode === 'add' ? trimmedCode : subjectForm.id,
       subjectName: trimmedName,
@@ -101,17 +129,24 @@ export default function AdminDashboard() {
     };
 
     if (modalMode === 'add') {
-      if (subjects.some(s => s.id === newSubject.id || s.subjectCode === newSubject.subjectCode)) {
-        alert('A subject with this code already exists.');
-        return;
-      }
-      setSubjects([...subjects, newSubject]);
+      const err = addSubject(subjectPayload);
+      if (err) { setAlertMessage({ title: 'Error', message: err, variant: 'danger' }); return; }
     } else {
-      setSubjects(subjects.map(s => (s.id === newSubject.id ? newSubject : s)));
+      const err = updateSubject(subjectPayload);
+      if (err) { setAlertMessage({ title: 'Error', message: err, variant: 'danger' }); return; }
     }
 
     setShowModal(false);
     resetSubjectForm();
+  };
+
+  const executeDelete = () => {
+    if (!confirmTarget) return;
+    if (confirmTarget.type === 'subject') {
+      const err = deleteSubject(confirmTarget.id);
+      if (err) setAlertMessage({ title: 'Error', message: err, variant: 'danger' });
+    }
+    setConfirmTarget(null);
   };
 
   // Search states
@@ -119,14 +154,14 @@ export default function AdminDashboard() {
 
   // Timetable generation states
   const [genStep, setGenStep] = useState(1);
-  const [genDept, setGenDept] = useState<'CSE' | 'IT'>('CSE');
+  const [genDept, setGenDept] = useState<string>(() => departments[0]?.id || '');
   const [genSem, setGenSem] = useState(4);
-  const [genSection, setGenSection] = useState('CSE G1');
+  const [genSection, setGenSection] = useState(() => groups[0]?.id || '');
   const [facultyAssignments, setFacultyAssignments] = useState<{ [key: string]: string }>({});
 
   // Timetable view states
-  const [viewDept, setViewDept] = useState<'CSE' | 'IT'>('CSE');
-  const [viewSection, setViewSection] = useState('CSE G1');
+  const [viewDept, setViewDept] = useState<string>(() => departments[0]?.id || '');
+  const [viewSection, setViewSection] = useState(() => groups[0]?.id || '');
   const [viewTimetable, setViewTimetable] = useState<Timetable | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
@@ -137,30 +172,14 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    const fetchBackendData = async () => {
-      try {
-        const [apiFaculties, apiSubjects, apiClassrooms] = await Promise.all([
-          fetchFaculties(),
-          fetchSubjects(),
-          fetchClassrooms(),
-        ]);
-
-        if (apiFaculties?.length) setFaculties(apiFaculties);
-        if (apiSubjects?.length) setSubjects(apiSubjects);
-        if (apiClassrooms?.length) setClassrooms(apiClassrooms);
-      } catch (error) {
-        console.warn('Backend data fetch failed, using frontend mock data:', error);
-      } finally {
-        setLoadingData(false);
-      }
-    };
-
-    fetchBackendData();
+    // All data (faculties, students, subjects, classrooms) is now managed by AppDataContext.
+    // Just mark loading as complete.
+    setLoadingData(false);
   }, []);
 
-  const loadSectionTimetable = async (department: 'CSE' | 'IT', section: string) => {
+  const loadSectionTimetable = async (department: string, section: string) => {
     setViewLoading(true);
-    const localTimetable = loadLocalTimetable(department, section) || getTimetableForSection(department, section);
+    const localTimetable = timetables.find(t => t.department === department && t.section === section);
     if (localTimetable) {
       setViewTimetable(localTimetable);
     } else {
@@ -193,6 +212,7 @@ export default function AdminDashboard() {
     { id: 'classrooms' as TabType, label: 'Classroom Management', icon: Building2 },
     { id: 'timetable' as TabType, label: 'View Timetables', icon: Calendar },
     { id: 'generate' as TabType, label: 'Generate Timetable', icon: Sparkles },
+    { id: 'departments' as TabType, label: 'Department Management', icon: Layers },
   ];
 
   // Filter functions
@@ -241,30 +261,32 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
           <h3 className="text-xl font-bold text-white mb-4">Department Statistics</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-300">CSE Students</span>
-              <span className="text-white font-semibold">{students.filter(s => s.department === 'CSE').length}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-300">IT Students</span>
-              <span className="text-white font-semibold">{students.filter(s => s.department === 'IT').length}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-300">CSE Faculty</span>
-              <span className="text-white font-semibold">{faculties.filter(f => f.department === 'CSE').length}</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-slate-300">IT Faculty</span>
-              <span className="text-white font-semibold">{faculties.filter(f => f.department === 'IT').length}</span>
-            </div>
+          <div className="space-y-4">
+            {(departments || []).map(dept => (
+              <div key={dept.id} className="p-4 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition-all">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-white uppercase tracking-wider text-xs">{dept.name}</span>
+                  <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 text-[10px] rounded uppercase">{dept.id}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-tighter">Students</span>
+                    <span className="text-lg font-bold text-white">{students.filter(s => s.department === dept.id).length}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-tighter">Faculty</span>
+                    <span className="text-lg font-bold text-white">{faculties.filter(f => f.department === dept.id).length}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
           <h3 className="text-xl font-bold text-white mb-4">Generated Timetables</h3>
           <div className="text-center py-8">
-            <div className="text-4xl font-bold text-white mb-2">{TIMETABLES.length}</div>
+            <div className="text-4xl font-bold text-white mb-2">{timetables.length}</div>
             <p className="text-slate-400">Total Timetables Generated</p>
             <button
               onClick={() => setActiveTab('generate')}
@@ -278,182 +300,9 @@ export default function AdminDashboard() {
     </div>
   );
 
-  const renderFacultyManagement = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Faculty Management</h2>
-          <p className="text-slate-300">Manage faculty members and their assignments</p>
-        </div>
-        <button
-          onClick={() => {
-            setModalMode('add');
-            setSelectedItem(null);
-            setShowModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Add Faculty
-        </button>
-      </div>
+  const renderFacultyManagement = () => <FacultyModule />;
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search faculty by name or email..."
-          className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-      </div>
-
-      {/* Faculty Table */}
-      <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-white/10">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Department</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Designation</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Subjects</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/10">
-              {getFilteredFaculties().map((faculty) => (
-                <tr key={faculty.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{faculty.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{faculty.email}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{faculty.department}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{faculty.designation}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
-                    {faculty.subjects.join(', ')}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <button
-                      onClick={() => {
-                        setModalMode('edit');
-                        setSelectedItem(faculty);
-                        setShowModal(true);
-                      }}
-                      className="text-blue-400 hover:text-blue-300 mr-3"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete ${faculty.name}?`)) {
-                          setFaculties(faculties.filter(f => f.id !== faculty.id));
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderStudentManagement = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Student Management</h2>
-          <p className="text-slate-300">Manage student records and assignments</p>
-        </div>
-        <button
-          onClick={() => {
-            setModalMode('add');
-            setSelectedItem(null);
-            setShowModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Add Student
-        </button>
-      </div>
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-        <input
-          type="text"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          placeholder="Search students by name, roll number, or email..."
-          className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-      </div>
-
-      {/* Students Table */}
-      <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto max-h-[600px]">
-          <table className="w-full">
-            <thead className="bg-white/10 sticky top-0">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Roll No</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Department</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Section</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Semester</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/10">
-              {getFilteredStudents().slice(0, 50).map((student) => (
-                <tr key={student.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-white font-mono">{student.rollNumber}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{student.name}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{student.email}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{student.department}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{student.section}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">{student.semester}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <button
-                      onClick={() => {
-                        setModalMode('edit');
-                        setSelectedItem(student);
-                        setShowModal(true);
-                      }}
-                      className="text-blue-400 hover:text-blue-300 mr-3"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete ${student.name}?`)) {
-                          setStudents(students.filter(s => s.id !== student.id));
-                        }
-                      }}
-                      className="text-red-400 hover:text-red-300"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-6 py-3 bg-white/5 text-sm text-slate-400">
-          Showing {Math.min(50, getFilteredStudents().length)} of {getFilteredStudents().length} students
-        </div>
-      </div>
-    </div>
-  );
+  const renderStudentManagement = () => <StudentModule />;
 
   const renderSubjectManagement = () => (
     <div className="space-y-6">
@@ -476,175 +325,57 @@ export default function AdminDashboard() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* CSE Subjects */}
-        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
-          <h3 className="text-xl font-bold text-white mb-4">CSE Subjects</h3>
-          <div className="space-y-3">
-            {subjects.filter(s => s.department === 'CSE').map(subject => (
-              <div key={subject.id} className="bg-white/5 border border-white/10 rounded-lg p-4">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <div className="font-semibold text-white">{subject.subjectName}</div>
-                    <div className="text-sm text-slate-400">{subject.subjectCode} • {subject.credits} Credits</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {departments.map(dept => (
+          <div key={dept.id} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
+            <h3 className="text-xl font-bold text-white mb-4">{dept.name} Subjects</h3>
+            <div className="space-y-3">
+              {subjects.filter(s => s.department === dept.id).map(subject => (
+                <div key={subject.id} className="bg-white/5 border border-white/10 rounded-lg p-4 hover:bg-white/10 transition-all">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <div className="font-semibold text-white">{subject.subjectName}</div>
+                      <div className="text-sm text-slate-400">{subject.subjectCode} • {subject.credits} Credits</div>
+                    </div>
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      subject.type === 'lab' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
+                    }`}>
+                      {subject.type}
+                    </span>
                   </div>
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    subject.type === 'lab' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
-                  }`}>
-                    {subject.type.toUpperCase()}
-                  </span>
-                </div>
-                <div className="text-sm text-slate-400">
-                  Faculty: {subject.assignedFaculty.length} assigned
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => {
-                      setModalMode('edit');
-                      setSelectedItem(subject);
-                      setSubjectForm({
-                        id: subject.id,
-                        subjectName: subject.subjectName,
-                        subjectCode: subject.subjectCode,
-                        credits: subject.credits,
-                        department: subject.department,
-                        semester: subject.semester,
-                        assignedFaculty: subject.assignedFaculty,
-                        type: subject.type,
-                      });
-                      setShowModal(true);
-                    }}
-                    className="px-2 py-1 bg-white/10 text-white rounded-md text-xs hover:bg-white/20"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Delete ${subject.subjectName}?`)) {
-                        setSubjects(subjects.filter(s => s.id !== subject.id));
-                      }
-                    }}
-                    className="px-2 py-1 bg-red-500/10 text-red-300 rounded-md text-xs hover:bg-red-500/20"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* IT Subjects */}
-        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
-          <h3 className="text-xl font-bold text-white mb-4">IT Subjects</h3>
-          <div className="space-y-3">
-            {subjects.filter(s => s.department === 'IT').map(subject => (
-              <div key={subject.id} className="bg-white/5 border border-white/10 rounded-lg p-4">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <div className="font-semibold text-white">{subject.subjectName}</div>
-                    <div className="text-sm text-slate-400">{subject.subjectCode} • {subject.credits} Credits</div>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setModalMode('edit');
+                        setSelectedItem(subject);
+                        setSubjectForm({
+                          id: subject.id,
+                          subjectName: subject.subjectName,
+                          subjectCode: subject.subjectCode,
+                          credits: subject.credits,
+                          department: subject.department,
+                          semester: subject.semester,
+                          assignedFaculty: subject.assignedFaculty,
+                          type: subject.type,
+                        });
+                        setShowModal(true);
+                      }}
+                      className="px-2 py-1 bg-white/10 text-white rounded-md text-xs hover:bg-white/20 transition-all"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => setConfirmTarget({ id: subject.id, name: subject.subjectName, type: 'subject' })}
+                      className="px-2 py-1 bg-red-500/10 text-red-300 rounded-md text-xs hover:bg-red-500/20 transition-all"
+                    >
+                      Delete
+                    </button>
                   </div>
-                  <span className={`px-2 py-1 rounded text-xs ${
-                    subject.type === 'lab' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'
-                  }`}>
-                    {subject.type.toUpperCase()}
-                  </span>
                 </div>
-                <div className="text-sm text-slate-400">
-                  Faculty: {subject.assignedFaculty.length} assigned
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => {
-                      setModalMode('edit');
-                      setSelectedItem(subject);
-                      setSubjectForm({
-                        id: subject.id,
-                        subjectName: subject.subjectName,
-                        subjectCode: subject.subjectCode,
-                        credits: subject.credits,
-                        department: subject.department,
-                        semester: subject.semester,
-                        assignedFaculty: subject.assignedFaculty,
-                        type: subject.type,
-                      });
-                      setShowModal(true);
-                    }}
-                    className="px-2 py-1 bg-white/10 text-white rounded-md text-xs hover:bg-white/20"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Delete ${subject.subjectName}?`)) {
-                        setSubjects(subjects.filter(s => s.id !== subject.id));
-                      }
-                    }}
-                    className="px-2 py-1 bg-red-500/10 text-red-300 rounded-md text-xs hover:bg-red-500/20"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderClassroomManagement = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Classroom Management</h2>
-          <p className="text-slate-300">Manage classroom inventory and status</p>
-        </div>
-        <button
-          onClick={() => {
-            setModalMode('add');
-            setSelectedItem(null);
-            setShowModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:shadow-lg transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          Add Classroom
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {classrooms.map(classroom => (
-          <div key={classroom.id} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-all">
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-lg flex items-center justify-center">
-                <Building2 className="w-6 h-6 text-white" />
-              </div>
-              <span className={`px-2 py-1 rounded text-xs ${
-                classroom.status === 'available' ? 'bg-green-500/20 text-green-300' :
-                classroom.status === 'occupied' ? 'bg-yellow-500/20 text-yellow-300' :
-                'bg-red-500/20 text-red-300'
-              }`}>
-                {classroom.status}
-              </span>
-            </div>
-            <h3 className="text-xl font-bold text-white mb-2">{classroom.classroomNumber}</h3>
-            <p className="text-slate-400 text-sm mb-4">Capacity: {classroom.capacity} students</p>
-            <div className="flex gap-2">
-              <button className="text-blue-400 hover:text-blue-300 text-sm">
-                <Edit className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`Delete ${classroom.classroomNumber}?`)) {
-                    setClassrooms(classrooms.filter(c => c.id !== classroom.id));
-                  }
-                }}
-                className="text-red-400 hover:text-red-300 text-sm"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              ))}
+              {subjects.filter(s => s.department === dept.id).length === 0 && (
+                <div className="text-center py-8 text-slate-500 text-sm italic">No subjects added.</div>
+              )}
             </div>
           </div>
         ))}
@@ -652,9 +383,12 @@ export default function AdminDashboard() {
     </div>
   );
 
+  const renderClassroomManagement = () => <ClassroomModule />;
+
   const renderViewTimetables = () => {
-      const sections = viewDept === 'CSE' ? ['CSE G1', 'CSE G2'] : ['IT G1', 'IT G2'];
-      const timetable = viewTimetable;
+    const sections = groups.filter(g => g.department === viewDept).map(g => g.id);
+    const timetable = viewTimetable;
+
     return (
       <div className="space-y-6">
         <div>
@@ -667,14 +401,16 @@ export default function AdminDashboard() {
           <select
             value={viewDept}
             onChange={(e) => {
-              const nextDept = e.target.value as 'CSE' | 'IT';
+              const nextDept = e.target.value;
               setViewDept(nextDept);
-              setViewSection(nextDept === 'CSE' ? 'CSE G1' : 'IT G1');
+              const firstGroup = groups.find(g => g.department === nextDept);
+              setViewSection(firstGroup?.id || '');
             }}
             className="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="CSE">CSE</option>
-            <option value="IT">IT</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
           </select>
 
           <select
@@ -682,22 +418,39 @@ export default function AdminDashboard() {
             onChange={(e) => setViewSection(e.target.value)}
             className="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            {sections.map(sec => (
-              <option key={sec} value={sec}>{sec}</option>
+            {(groups || []).filter(g => g.department === viewDept).map(g => (
+              <option key={g.id} value={g.id}>{g.name}</option>
             ))}
           </select>
 
           {timetable && (
             <div className="flex gap-2 ml-auto">
               <button
-                onClick={() => exportToPDF(timetable)}
+                onClick={async () => {
+                  console.log('Export PDF clicked');
+                  console.log('Timetable to export:', timetable);
+                  try {
+                    await exportToPDF(timetable);
+                  } catch (error) {
+                    console.error('PDF export failed:', error);
+                    alert('Failed to export PDF. Please try again.');
+                  }
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all"
               >
                 <FileDown className="w-4 h-4" />
                 Export PDF
               </button>
               <button
-                onClick={() => exportToExcel(timetable)}
+                onClick={async () => {
+                  console.log('Export Excel clicked');
+                  try {
+                    await exportToExcel(timetable);
+                  } catch (error) {
+                    console.error('Excel export failed:', error);
+                    alert('Failed to export Excel. Please try again.');
+                  }
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all"
               >
                 <FileDown className="w-4 h-4" />
@@ -735,9 +488,22 @@ export default function AdminDashboard() {
                       <td className="px-4 py-3 font-semibold text-white">{day}</td>
                       {PERIODS.slice(0, 8).map(period => {
                         const entry = timetable.entries.find(e => e.day === day && e.period === period);
-                        const subject = entry ? subjects.find(s => s.id === entry.subjectId) : null;
-                        const faculty = entry ? faculties.find(f => f.id === entry.facultyId) : null;
-                        const classroom = entry ? classrooms.find(c => c.id === entry.classroomId) : null;
+                        const subject = entry ? (subjects.find(s => s.id === entry.subjectId)) : null;
+                        const faculty = entry ? (faculties.find(f => f.id === entry.facultyId) || faculties.find(f => f.name === (entry as any).facultyName)) : null;
+                        const classroom = entry ? (classrooms.find(c => c.id === entry.classroomId)) : null;
+
+                        // Log what the UI displays
+                        console.log(`UI Display - ${day} P${period}:`, {
+                          entry: entry ? {
+                            subjectId: entry.subjectId,
+                            facultyId: entry.facultyId,
+                            classroomId: entry.classroomId,
+                            isCancelled: entry.isCancelled
+                          } : null,
+                          subject: subject?.subjectCode,
+                          faculty: faculty?.name,
+                          classroom: classroom?.classroomNumber
+                        });
 
                         return (
                           <td key={period} className={`px-4 py-3 text-center text-sm ${
@@ -747,7 +513,7 @@ export default function AdminDashboard() {
                               <div>
                                 <div className="font-semibold text-white text-xs">{subject?.subjectCode}</div>
                                 <div className="text-[10px] text-slate-300">{subject?.subjectName}</div>
-                                <div className="text-[10px] text-slate-400">{faculty?.name.split(' ').pop()}</div>
+                                <div className="text-[10px] text-slate-400">{faculty?.name ? faculty.name.split(' ').pop() : 'N/A'}</div>
                                 <div className="text-[10px] text-slate-500">{classroom?.classroomNumber}</div>
                               </div>
                             ) : entry?.isCancelled ? (
@@ -783,87 +549,91 @@ export default function AdminDashboard() {
 
   const renderGenerateTimetable = () => {
     const handleGenerate = async () => {
-      const sectionSubjects = subjects.filter(
-        s => s.department === genDept && s.semester === genSem
-      );
-
-      // Validate all subjects have faculty assigned
-      const unassignedSubjects = sectionSubjects.filter(s => !facultyAssignments[s.id]);
-      if (unassignedSubjects.length > 0) {
-        alert(`Cannot generate: Missing faculty assignment for ${unassignedSubjects.map(s => s.subjectCode).join(', ')}`);
+      if (!genDept || !genSection) {
+        setAlertMessage({ title: 'Missing Info', message: 'Please ensure Department and Section are selected in Step 1.', variant: 'warning' });
         return;
       }
-
-      console.log('Generating timetable with faculty assignments:', facultyAssignments);
-
-      const otherSection = genSection.endsWith('G1') ? `${genDept} G2` : `${genDept} G1`;
-      let existingTimetableEntries: any[] = [];
-
-      const localOtherTimetable = loadLocalTimetable(genDept, otherSection) || getTimetableForSection(genDept, otherSection);
-      if (localOtherTimetable?.entries) {
-        existingTimetableEntries = localOtherTimetable.entries;
-      }
-
       try {
-        const remoteOtherTimetable = await fetchTimetableForSection(genDept, otherSection);
-        if (remoteOtherTimetable?.entries?.length) {
-          existingTimetableEntries = remoteOtherTimetable.entries;
+        const sectionSubjects = subjects.filter(
+          s => s.department === genDept && s.semester === genSem
+        );
+
+        if (sectionSubjects.length === 0) {
+          setAlertMessage({ title: 'Validation Error', message: `No subjects found for ${genDept} Semester ${genSem}. Please add subjects first.`, variant: 'warning' });
+          return;
         }
-      } catch (error) {
-        console.warn(`Unable to fetch ${otherSection} timetable for cross-group validation:`, error);
+
+        // Validate all subjects have faculty assigned
+        const unassignedSubjects = sectionSubjects.filter(s => !facultyAssignments[s.id]);
+        if (unassignedSubjects.length > 0) {
+          setAlertMessage({ title: 'Missing Faculty', message: `Cannot generate: Missing faculty assignment for ${unassignedSubjects.map(s => s.subjectCode).join(', ')}`, variant: 'warning' });
+          return;
+        }
+
+        console.log('Generating timetable with faculty assignments:', facultyAssignments);
+
+        const otherGroup = groups.find(g => g.department === genDept && g.id !== genSection);
+        const otherSection = otherGroup?.id || 'none';
+        let existingTimetableEntries: any[] = [];
+
+        const localOtherTimetable = timetables.find(t => t.department === genDept && t.section === otherSection);
+        if (localOtherTimetable?.entries) {
+          existingTimetableEntries = localOtherTimetable.entries;
+        }
+
+        if (otherSection !== 'none') {
+          try {
+            const remoteOtherTimetable = await fetchTimetableForSection(genDept, otherSection);
+            if (remoteOtherTimetable?.entries?.length) {
+              existingTimetableEntries = remoteOtherTimetable.entries;
+            }
+          } catch (error) {
+            console.warn(`Unable to fetch ${otherSection} timetable for cross-group validation:`, error);
+          }
+        }
+
+        const facultyProfiles = faculties.reduce((map, faculty) => {
+          map[faculty.id] = { 
+            isHOD: !!faculty.isHOD, 
+            maxDailySlots: faculty.maxDailySlots || (faculty.isHOD ? 3 : 5),
+            offSlots: faculty.offSlots || []
+          };
+          return map;
+        }, {} as Record<string, any>);
+
+        const timetable = generateTimetable({
+          department: genDept,
+          semester: genSem,
+          section: genSection,
+          subjects: sectionSubjects,
+          facultyAssignments,
+          classrooms,
+          existingTimetableEntries,
+          facultyProfiles,
+        });
+
+        console.log('Generated timetable entries:', timetable.entries.length, 'entries');
+
+        const validation = validateTimetable(timetable, sectionSubjects);
+
+        if (!validation.valid) {
+          setAlertMessage({ title: 'Conflicts Detected', message: 'Timetable generation had conflicts:\n' + validation.conflicts.join('\n') + '\n\nThe timetable was saved with best-effort results.', variant: 'warning' });
+        } else {
+          setAlertMessage({ title: 'Success', message: 'Timetable generated and saved successfully!', variant: 'info' });
+        }
+
+        saveTimetableToStore(timetable);
+        setViewTimetable(timetable); // Update the view immediately
+
+        setGenStep(1);
+        setFacultyAssignments({});
+        setActiveTab('timetable');
+        setViewDept(genDept);
+        setViewSection(genSection);
+      } catch (error: any) {
+        console.error('Timetable generation error:', error);
+        setAlertMessage({ title: 'Generation Failed', message: `Timetable generation failed: ${error?.message || 'Unknown error'}. Check browser console for details.`, variant: 'danger' });
       }
-
-      const facultyProfiles = faculties.reduce((map, faculty) => {
-        map[faculty.id] = { isHOD: !!faculty.isHOD, maxDailySlots: faculty.isHOD ? 3 : 5 };
-        return map;
-      }, {} as { [facultyId: string]: { isHOD?: boolean; maxDailySlots?: number } });
-
-      const timetable = generateTimetable({
-        department: genDept,
-        semester: genSem,
-        section: genSection,
-        subjects: sectionSubjects,
-        facultyAssignments,
-        classrooms,
-        existingTimetableEntries,
-        facultyProfiles,
-      });
-
-      console.log('Generated timetable entries:', timetable.entries.map(e => ({
-        day: e.day,
-        period: e.period,
-        subject: sectionSubjects.find(s => s.id === e.subjectId)?.subjectCode,
-        facultyId: e.facultyId,
-        selectedFacultyId: facultyAssignments[e.subjectId],
-        match: e.facultyId === facultyAssignments[e.subjectId]
-      })));
-
-      const validation = validateTimetable(timetable);
-
-      if (!validation.valid) {
-        alert('Timetable generation failed: ' + validation.conflicts.join(', '));
-        return;
-      }
-
-      addTimetable(timetable);
-      saveLocalTimetable(timetable);
-      if (viewDept === genDept && viewSection === genSection) {
-        setViewTimetable(timetable);
-      }
-
-      const response = await saveTimetable(timetable).catch((error) => {
-        console.error('Timetable save failed:', error);
-        return null;
-      });
-      if (response?.success) {
-        alert('Timetable generated and saved to the database successfully!');
-      } else {
-        alert('Timetable generated locally; backend save failed or is unavailable. Check browser console for details.');
-      }
-
-      setGenStep(1);
-      setFacultyAssignments({});
-      setActiveTab('timetable');
     };
 
     return (
@@ -900,13 +670,16 @@ export default function AdminDashboard() {
                 <select
                   value={genDept}
                   onChange={(e) => {
-                    setGenDept(e.target.value as 'CSE' | 'IT');
-                    setGenSection(e.target.value === 'CSE' ? 'CSE G1' : 'IT G1');
+                    const dept = e.target.value;
+                    setGenDept(dept);
+                    const firstGroup = groups.find(g => g.department === dept);
+                    setGenSection(firstGroup?.id || '');
                   }}
                   className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="CSE">Computer Science Engineering (CSE)</option>
-                  <option value="IT">Information Technology (IT)</option>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.fullName || d.name} ({d.id})</option>
+                  ))}
                 </select>
               </div>
 
@@ -917,7 +690,9 @@ export default function AdminDashboard() {
                   onChange={(e) => setGenSem(Number(e.target.value))}
                   className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  <option value="4">4th Semester</option>
+                  {[4].map(s => (
+                    <option key={s} value={s}>{s}th Semester</option>
+                  ))}
                 </select>
               </div>
 
@@ -928,8 +703,8 @@ export default function AdminDashboard() {
                   onChange={(e) => setGenSection(e.target.value)}
                   className="w-full px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  {(genDept === 'CSE' ? ['CSE G1', 'CSE G2'] : ['IT G1', 'IT G2']).map(sec => (
-                    <option key={sec} value={sec}>{sec}</option>
+                  {groups.filter(g => g.department === genDept).map(g => (
+                    <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
                 </select>
               </div>
@@ -991,7 +766,7 @@ export default function AdminDashboard() {
                       .filter(s => !facultyAssignments[s.id]);
 
                     if (unassignedSubjects.length > 0) {
-                      alert(`Please assign faculty to: ${unassignedSubjects.map(s => s.subjectCode).join(', ')}`);
+                      setAlertMessage({ title: 'Missing Faculty', message: `Please assign faculty to: ${unassignedSubjects.map(s => s.subjectCode).join(', ')}`, variant: 'warning' });
                       return;
                     }
 
@@ -1093,6 +868,7 @@ export default function AdminDashboard() {
           {activeTab === 'classrooms' && renderClassroomManagement()}
           {activeTab === 'timetable' && renderViewTimetables()}
           {activeTab === 'generate' && renderGenerateTimetable()}
+          {activeTab === 'departments' && <DepartmentModule />}
         </div>
       </main>
       {showModal && activeTab === 'subjects' && (
@@ -1135,11 +911,12 @@ export default function AdminDashboard() {
                 <span>Department</span>
                 <select
                   value={subjectForm.department}
-                  onChange={(e) => setSubjectForm({ ...subjectForm, department: e.target.value as 'CSE' | 'IT' })}
+                  onChange={(e) => setSubjectForm({ ...subjectForm, department: e.target.value })}
                   className="w-full rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-white outline-none focus:border-indigo-500"
                 >
-                  <option value="CSE">CSE</option>
-                  <option value="IT">IT</option>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
                 </select>
               </label>
               <label className="space-y-2 text-sm text-slate-300">
@@ -1195,6 +972,29 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        open={!!confirmTarget}
+        title="Delete Record"
+        message={`Are you sure you want to delete ${confirmTarget?.name}? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        type="confirm"
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmTarget(null)}
+      />
+
+      {/* Alert Dialog */}
+      <ConfirmDialog
+        open={!!alertMessage}
+        title={alertMessage?.title || 'Notification'}
+        message={alertMessage?.message || ''}
+        variant={alertMessage?.variant || 'info'}
+        type="alert"
+        onConfirm={() => setAlertMessage(null)}
+        onCancel={() => setAlertMessage(null)}
+      />
     </div>
   );
 }

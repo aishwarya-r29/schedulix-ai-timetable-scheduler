@@ -1,3 +1,8 @@
+export const DEPARTMENTS = [
+  { id: 'CSE', name: 'CSE', fullName: 'Computer Science Engineering' },
+  { id: 'IT',  name: 'IT',  fullName: 'Information Technology' },
+];
+
 export const ADMINS = [
   {
     id: 'u_a01',

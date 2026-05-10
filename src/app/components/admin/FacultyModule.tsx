@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Edit, Trash2, Search, X, Clock, AlertTriangle } from 'lucide-react';
 import { Faculty } from '../../data/mockData';
 import { useAppData } from '../../context/AppDataContext';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -11,21 +12,29 @@ const LABEL = 'block text-xs font-medium text-slate-400 mb-1.5 uppercase trackin
 const BTN_PRIMARY = 'flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white text-sm font-semibold rounded-xl hover:shadow-lg hover:shadow-indigo-500/25 transition-all';
 const BTN_GHOST = 'px-4 py-2 bg-white/5 border border-white/10 text-slate-300 text-sm rounded-xl hover:bg-white/10 transition-all';
 
-const blankForm = (): Omit<Faculty, 'id' | 'userId'> => ({
-  name: '', email: '', department: 'CSE', designation: 'Faculty',
+const blankForm = (deptId: string = ''): Omit<Faculty, 'id' | 'userId'> => ({
+  name: '', email: '', department: deptId, designation: 'Faculty',
   subjects: [], isHOD: false, maxDailySlots: 5, offSlots: [],
   password: 'faculty123',
 });
 
 export default function FacultyModule() {
-  const { faculties, subjects, timetables, addFaculty, updateFaculty, deleteFaculty } = useAppData();
+  const { 
+    faculties = [], 
+    subjects = [], 
+    departments = [], 
+    addFaculty, 
+    updateFaculty, 
+    deleteFaculty 
+  } = useAppData();
 
   const [search, setSearch] = useState('');
-  const [deptFilter, setDeptFilter] = useState<'All' | 'CSE' | 'IT'>('All');
+  const [deptFilter, setDeptFilter] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState(blankForm());
+  const [form, setForm] = useState(() => blankForm(departments[0]?.id || ''));
   const [error, setError] = useState('');
+  const [confirmTarget, setConfirmTarget] = useState<Faculty | null>(null);
 
   const filtered = faculties.filter(f => {
     const q = search.toLowerCase();
@@ -34,7 +43,7 @@ export default function FacultyModule() {
     return matchQ && matchD;
   });
 
-  const openAdd = () => { setEditId(null); setForm(blankForm()); setError(''); setModalOpen(true); };
+  const openAdd = () => { setEditId(null); setForm(blankForm(departments[0]?.id || '')); setError(''); setModalOpen(true); };
   const openEdit = (f: Faculty) => {
     setEditId(f.id);
     setForm({ name: f.name, email: f.email, department: f.department, designation: f.designation,
@@ -51,13 +60,11 @@ export default function FacultyModule() {
     setModalOpen(false);
   };
 
-  const handleDelete = (f: Faculty) => {
-    const usedIn = timetables.filter(tt => tt.entries.some(e => e.facultyId === f.id));
-    const warn = usedIn.length > 0
-      ? `Warning: ${f.name} appears in ${usedIn.length} timetable(s). Those entries will become unresolvable. Delete anyway?`
-      : `Delete ${f.name}?`;
-    if (!confirm(warn)) return;
-    deleteFaculty(f.id);
+  const handleDelete = (f: Faculty) => setConfirmTarget(f);
+
+  const executeDelete = () => {
+    if (confirmTarget) deleteFaculty(confirmTarget.id);
+    setConfirmTarget(null);
   };
 
   const toggleSlot = (slot: string) => {
@@ -92,7 +99,7 @@ export default function FacultyModule() {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email…"
             className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm" />
         </div>
-        {(['All', 'CSE', 'IT'] as const).map(d => (
+        {['All', ...departments.map(d => d.id)].map(d => (
           <button key={d} onClick={() => setDeptFilter(d)}
             className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${deptFilter === d ? 'bg-indigo-600 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
             {d}
@@ -127,7 +134,11 @@ export default function FacultyModule() {
                   </td>
                   <td className="px-5 py-4 text-sm text-slate-300">{f.email}</td>
                   <td className="px-5 py-4">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${f.department === 'CSE' ? 'bg-blue-500/20 text-blue-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      f.department === 'CSE' ? 'bg-blue-500/20 text-blue-300' : 
+                      f.department === 'IT' ? 'bg-emerald-500/20 text-emerald-300' : 
+                      'bg-indigo-500/20 text-indigo-300'
+                    }`}>
                       {f.department}
                     </span>
                   </td>
@@ -136,7 +147,7 @@ export default function FacultyModule() {
                   <td className="px-5 py-4 text-sm text-slate-400">{f.offSlots?.length ? `${f.offSlots.length} slot(s)` : '—'}</td>
                   <td className="px-5 py-4 text-sm text-slate-300">{f.subjects.length} subject(s)</td>
                   <td className="px-5 py-4">
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2">
                       <button onClick={() => openEdit(f)} className="p-1.5 rounded-lg bg-white/5 text-blue-400 hover:bg-blue-500/20 transition-colors"><Edit className="w-3.5 h-3.5" /></button>
                       <button onClick={() => handleDelete(f)} className="p-1.5 rounded-lg bg-white/5 text-red-400 hover:bg-red-500/20 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
                     </div>
@@ -181,9 +192,10 @@ export default function FacultyModule() {
                 </div>
                 <div>
                   <label className={LABEL}>Department *</label>
-                  <select value={form.department} onChange={e => setForm(p => ({ ...p, department: e.target.value as 'CSE' | 'IT', subjects: [] }))} className={INPUT}>
-                    <option value="CSE">CSE</option>
-                    <option value="IT">IT</option>
+                  <select value={form.department} onChange={e => setForm(p => ({ ...p, department: e.target.value, subjects: [] }))} className={INPUT}>
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div>
@@ -251,6 +263,17 @@ export default function FacultyModule() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={!!confirmTarget}
+        title="Delete Faculty"
+        message={confirmTarget ? (
+          timetables.some(tt => tt.entries.some(e => e.facultyId === confirmTarget.id))
+            ? `Warning: ${confirmTarget.name} appears in existing timetable(s). Those entries will become unresolvable.\n\nDelete anyway?`
+            : `Are you sure you want to delete ${confirmTarget.name}?`
+        ) : ''}
+        onConfirm={executeDelete}
+        onCancel={() => setConfirmTarget(null)}
+      />
     </div>
   );
 }

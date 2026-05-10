@@ -23,3 +23,33 @@ export function loadLocalTimetable(department: string, section: string): Timetab
     return null;
   }
 }
+
+// ─── Generic Storage Helpers ──────────────────────────────────────────────────
+
+export const KEYS = {
+  faculties: 'schedulix_faculties',
+  students: 'schedulix_students',
+  subjects: 'schedulix_subjects',
+  classrooms: 'schedulix_classrooms',
+  groups: 'schedulix_groups',
+  departments: 'schedulix_departments',
+  timetables: 'schedulix_timetables',
+};
+
+export function load<T>(key: string, defaultValue: T): T {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : defaultValue;
+  } catch (e) {
+    console.warn(`Failed to load ${key} from storage`, e);
+    return defaultValue;
+  }
+}
+
+export function persist<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.warn(`Failed to persist ${key} to storage`, e);
+  }
+}

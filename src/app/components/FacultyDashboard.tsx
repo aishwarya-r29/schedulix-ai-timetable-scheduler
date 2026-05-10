@@ -11,7 +11,8 @@ import {
   Eye,
   Home,
 } from 'lucide-react';
-import { useAuth, getFacultyByUserId } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
+import { useAppData } from '../context/AppDataContext';
 import {
   FACULTIES,
   SUBJECTS,
@@ -23,7 +24,8 @@ import {
 } from '../data/mockData';
 import { exportFacultyToPDF } from '../utils/exportUtils';
 import { fetchTimetableForFaculty, fetchAllTimetables } from '../utils/api';
-import { loadLocalTimetable } from '../utils/storage';
+
+import ConfirmDialog from './ui/ConfirmDialog';
 
 type TabType = 'home' | 'my-timetable' | 'other-faculty' | 'class-timetable';
 
@@ -32,24 +34,27 @@ export default function FacultyDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('home');
 
-  const faculty = getFacultyByUserId(user?.id || '');
+  const { faculties = [], departments = [], groups = [], subjects: liveSubjects = [], classrooms: liveClassrooms = [], timetables: contextTimetables = [], refreshTimetables } = useAppData();
+
+  const faculty = faculties.find(f => f.userId === user?.id);
 
   // States for viewing other faculty timetables
-  const [selectedDept, setSelectedDept] = useState<'CSE' | 'IT'>('CSE');
+  const [selectedDept, setSelectedDept] = useState<string>(() => departments[0]?.id || '');
   const [selectedFacultyId, setSelectedFacultyId] = useState('');
 
   // States for viewing class timetables
-  const [selectedClassDept, setSelectedClassDept] = useState<'CSE' | 'IT'>('CSE');
-  const [selectedSection, setSelectedSection] = useState('CSE G1');
+  const [selectedClassDept, setSelectedClassDept] = useState<string>(() => departments[0]?.id || '');
+  const [selectedSection, setSelectedSection] = useState(() => groups.find(g => g.department === departments[0]?.id)?.id || '');
 
   // Cancellation states
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<TimetableEntry | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [alertMessage, setAlertMessage] = useState<{ title: string, message: string, variant: 'info' | 'danger' | 'warning' } | null>(null);
 
   // Timetable loading state
   const [timetables, setTimetables] = useState<any[]>([]);
-  const [allTimetables, setAllTimetables] = useState<any[]>([]);
+  const allTimetables = contextTimetables;
   const [loadingTimetable, setLoadingTimetable] = useState(true);
 
   // Local state to track cancellations
@@ -63,16 +68,14 @@ export default function FacultyDashboard() {
 
     setLoadingTimetable(true);
     try {
-      const [fetchedTimetables, fetchedAllTimetables] = await Promise.all([
-        fetchTimetableForFaculty(faculty.id),
-        fetchAllTimetables(),
-      ]);
-
+      const fetchedTimetables = await fetchTimetableForFaculty(faculty.id);
       if (Array.isArray(fetchedTimetables)) {
         setTimetables(fetchedTimetables);
       }
-      if (Array.isArray(fetchedAllTimetables)) {
-        setAllTimetables(fetchedAllTimetables);
+
+      // If we are viewing other timetables, refresh the global list too
+      if (activeTab === 'other-faculty' || activeTab === 'class-timetable') {
+        await refreshTimetables();
       }
     } catch (error) {
       console.warn('Unable to load timetable data from backend:', error);
@@ -90,10 +93,28 @@ export default function FacultyDashboard() {
     navigate('/');
   };
 
+  if (contextLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+          <p className="text-slate-400 animate-pulse">Synchronizing Dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!faculty) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Faculty profile not found</div>
+        <div className="max-w-md w-full mx-4 p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-center">
+          <AlertCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-white mb-2">Profile Not Found</h2>
+          <p className="text-slate-400 mb-6">We couldn't find a faculty profile associated with your account. Please contact the administrator.</p>
+          <button onClick={handleLogout} className="px-6 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">
+            Back to Login
+          </button>
+        </div>
       </div>
     );
   }
@@ -105,7 +126,10 @@ export default function FacultyDashboard() {
 
     timetableSource.forEach(tt => {
       tt.entries.forEach((entry: TimetableEntry) => {
-        if (entry.facultyId === faculty.id) {
+        const isIdMatch = entry.facultyId === faculty.id;
+        const isNameMatch = !isIdMatch && faculties.find(f => f.id === entry.facultyId)?.name === faculty.name;
+
+        if (isIdMatch || isNameMatch) {
           entries.push({ ...entry, section: tt.section });
         }
       });
@@ -119,7 +143,7 @@ export default function FacultyDashboard() {
   // Handle class cancellation
   const handleCancelClass = () => {
     if (!selectedEntry || !cancelReason.trim()) {
-      alert('Please provide a reason for cancellation');
+      setAlertMessage({ title: 'Missing Information', message: 'Please provide a reason for cancellation', variant: 'warning' });
       return;
     }
 
@@ -132,7 +156,7 @@ export default function FacultyDashboard() {
     if (selectedEntry.day === today) {
       const periodHour = 9 + (selectedEntry.period - 1); // Approximate
       if (currentHour >= periodHour - 1) {
-        alert('Cancellation must be at least 1 hour before class');
+        setAlertMessage({ title: 'Cancellation Rejected', message: 'Cancellation must be at least 1 hour before class', variant: 'danger' });
         setShowCancelModal(false);
         return;
       }
@@ -143,7 +167,7 @@ export default function FacultyDashboard() {
     setCancelledClasses(new Set([...cancelledClasses, key]));
     setShowCancelModal(false);
     setCancelReason('');
-    alert('Class cancelled successfully!');
+    setAlertMessage({ title: 'Success', message: 'Class cancelled successfully!', variant: 'info' });
   };
 
   const isClassCancelled = (entry: TimetableEntry) => {
@@ -155,7 +179,7 @@ export default function FacultyDashboard() {
     <div className="space-y-6">
       <div>
         <h2 className="text-3xl font-bold text-white mb-2">Welcome, {faculty.name}</h2>
-        <p className="text-slate-300">{faculty.designation} • {faculty.department} Department</p>
+        <p className="text-slate-300">{faculty.designation} • {departments.find(d => d.id === faculty.department)?.name || faculty.department} Department</p>
       </div>
 
       {/* Stats */}
@@ -192,7 +216,7 @@ export default function FacultyDashboard() {
         <h3 className="text-xl font-bold text-white mb-4">Your Subjects</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {faculty.subjects.map(subId => {
-            const subject = SUBJECTS.find(s => s.id === subId);
+            const subject = liveSubjects.find(s => s.id === subId) || SUBJECTS.find(s => s.id === subId);
             return subject ? (
               <div key={subId} className="bg-white/5 border border-white/10 rounded-lg p-4">
                 <div className="font-semibold text-white">{subject.subjectName}</div>
@@ -255,14 +279,14 @@ export default function FacultyDashboard() {
         <button
           onClick={() => {
             const formattedEntries = myTimetable.map(e => {
-              const subject = SUBJECTS.find(s => s.id === e.subjectId);
-              const classroom = CLASSROOMS.find(c => c.id === e.classroomId);
-              return {
-                ...e,
-                subject: subject?.subjectCode,
-                section: e.section,
-                classroom: classroom?.classroomNumber,
-              };
+            const subject = liveSubjects.find(s => s.id === e.subjectId) || SUBJECTS.find(s => s.id === e.subjectId);
+            const classroom = liveClassrooms.find(c => c.id === e.classroomId) || CLASSROOMS.find(c => c.id === e.classroomId);
+            return {
+              ...e,
+              subject: subject?.subjectCode,
+              section: e.section,
+              classroom: classroom?.classroomNumber,
+            };
             });
             exportFacultyToPDF(faculty.name, formattedEntries, faculty.department);
           }}
@@ -294,8 +318,8 @@ export default function FacultyDashboard() {
                   <td className="px-4 py-3 font-semibold text-white">{day}</td>
                   {PERIODS.slice(0, 8).map(period => {
                     const entry = myTimetable.find(e => e.day === day && e.period === period);
-                    const subject = entry ? SUBJECTS.find(s => s.id === entry.subjectId) : null;
-                    const classroom = entry ? CLASSROOMS.find(c => c.id === entry.classroomId) : null;
+                    const subject = entry ? (liveSubjects.find(s => s.id === entry.subjectId) || SUBJECTS.find(s => s.id === entry.subjectId)) : null;
+                    const classroom = entry ? (liveClassrooms.find(c => c.id === entry.classroomId) || CLASSROOMS.find(c => c.id === entry.classroomId)) : null;
                     const cancelled = entry ? isClassCancelled(entry) : false;
 
                     return (
@@ -400,16 +424,22 @@ export default function FacultyDashboard() {
   );
 
   const renderOtherFaculty = () => {
-    const deptFaculties = FACULTIES.filter(f => f.department === selectedDept);
-    const selectedFaculty = FACULTIES.find(f => f.id === selectedFacultyId);
+    const deptFaculties = faculties.filter(f => f.department === selectedDept);
+    const selectedFaculty = faculties.find(f => f.id === selectedFacultyId);
 
     const getOtherFacultyTimetable = () => {
       if (!selectedFacultyId) return [];
 
       const entries: (TimetableEntry & { section: string })[] = [];
-      allTimetables.forEach(tt => {
+      contextTimetables.forEach(tt => {
         tt.entries.forEach((entry: TimetableEntry) => {
-          if (entry.facultyId === selectedFacultyId) {
+          // Robust matching: Try ID first, then fallback to name comparison if IDs are mismatched
+          // This handles cases where a faculty record might have been re-created with a new ID
+          const isIdMatch = entry.facultyId === selectedFacultyId;
+          const isNameMatch = !isIdMatch && selectedFaculty && 
+                            faculties.find(f => f.id === entry.facultyId)?.name === selectedFaculty.name;
+
+          if (isIdMatch || isNameMatch) {
             entries.push({ ...entry, section: tt.section });
           }
         });
@@ -430,13 +460,14 @@ export default function FacultyDashboard() {
           <select
             value={selectedDept}
             onChange={(e) => {
-              setSelectedDept(e.target.value as 'CSE' | 'IT');
+              setSelectedDept(e.target.value);
               setSelectedFacultyId('');
             }}
             className="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="CSE">CSE Department</option>
-            <option value="IT">IT Department</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.name} Dept</option>
+            ))}
           </select>
 
           <select
@@ -476,8 +507,8 @@ export default function FacultyDashboard() {
                       <td className="px-4 py-3 font-semibold text-white">{day}</td>
                       {PERIODS.slice(0, 8).map(period => {
                         const entry = otherTimetable.find(e => e.day === day && e.period === period);
-                        const subject = entry ? SUBJECTS.find(s => s.id === entry.subjectId) : null;
-                        const classroom = entry ? CLASSROOMS.find(c => c.id === entry.classroomId) : null;
+                        const subject = entry ? liveSubjects.find(s => s.id === entry.subjectId) : null;
+                        const classroom = entry ? liveClassrooms.find(c => c.id === entry.classroomId) : null;
 
                         return (
                           <td key={period} className={`px-4 py-3 text-center text-sm ${
@@ -512,7 +543,6 @@ export default function FacultyDashboard() {
   };
 
   const renderClassTimetable = () => {
-    const sections = selectedClassDept === 'CSE' ? ['CSE G1', 'CSE G2'] : ['IT G1', 'IT G2'];
     const timetable = allTimetables.find(tt => tt.department === selectedClassDept && tt.section === selectedSection);
 
     return (
@@ -526,13 +556,16 @@ export default function FacultyDashboard() {
           <select
             value={selectedClassDept}
             onChange={(e) => {
-              setSelectedClassDept(e.target.value as 'CSE' | 'IT');
-              setSelectedSection(e.target.value === 'CSE' ? 'CSE G1' : 'IT G1');
+              const dept = e.target.value;
+              setSelectedClassDept(dept);
+              const firstGroup = groups.find(g => g.department === dept);
+              setSelectedSection(firstGroup?.id || '');
             }}
             className="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="CSE">CSE</option>
-            <option value="IT">IT</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.id}</option>
+            ))}
           </select>
 
           <select
@@ -540,8 +573,9 @@ export default function FacultyDashboard() {
             onChange={(e) => setSelectedSection(e.target.value)}
             className="px-4 py-2 bg-white/5 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            {sections.map(sec => (
-              <option key={sec} value={sec}>{sec}</option>
+            <option value="">Select Section</option>
+            {groups.filter(g => g.department === selectedClassDept).map(sec => (
+              <option key={sec.id} value={sec.id}>{sec.name}</option>
             ))}
           </select>
         </div>
@@ -567,9 +601,9 @@ export default function FacultyDashboard() {
                       <td className="px-4 py-3 font-semibold text-white">{day}</td>
                       {PERIODS.slice(0, 8).map(period => {
                         const entry = timetable.entries.find(e => e.day === day && e.period === period);
-                        const subject = entry ? SUBJECTS.find(s => s.id === entry.subjectId) : null;
-                        const faculty = entry ? FACULTIES.find(f => f.id === entry.facultyId) : null;
-                        const classroom = entry ? CLASSROOMS.find(c => c.id === entry.classroomId) : null;
+                        const subject = entry ? liveSubjects.find(s => s.id === entry.subjectId) : null;
+                        const faculty = entry ? faculties.find(f => f.id === entry.facultyId) : null;
+                        const classroom = entry ? liveClassrooms.find(c => c.id === entry.classroomId) : null;
                         const cancelled = entry ? isClassCancelled(entry) : false;
 
                         return (
@@ -668,6 +702,17 @@ export default function FacultyDashboard() {
           {activeTab === 'class-timetable' && renderClassTimetable()}
         </div>
       </main>
+
+      {/* Alert Dialog */}
+      <ConfirmDialog
+        open={!!alertMessage}
+        title={alertMessage?.title || 'Notification'}
+        message={alertMessage?.message || ''}
+        variant={alertMessage?.variant || 'info'}
+        type="alert"
+        onConfirm={() => setAlertMessage(null)}
+        onCancel={() => setAlertMessage(null)}
+      />
     </div>
   );
 }

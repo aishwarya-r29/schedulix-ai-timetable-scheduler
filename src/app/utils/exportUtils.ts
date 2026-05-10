@@ -1,266 +1,353 @@
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
-import { Timetable, DAYS, PERIODS, PERIOD_TIMINGS, SUBJECTS, FACULTIES, CLASSROOMS } from '../data/mockData';
+import {
+  Timetable,
+  DAYS,
+  PERIODS,
+  PERIOD_TIMINGS,
+  SUBJECTS,
+  FACULTIES,
+  CLASSROOMS,
+} from '../data/mockData';
+import { fetchSubjects, fetchFaculties, fetchClassrooms } from '../utils/api';
+import logo from '../assets/logo.png';
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+function normalizeDay(day: string) {
+  return day.trim().toLowerCase();
+}
+
+// ─── Export Timetable to PDF ──────────────────────────────────────────────────
 
 /**
- * Export timetable to PDF
+ * Exports a section timetable to a PDF that looks exactly like the dashboard table.
  */
-export function exportToPDF(timetable: Timetable) {
-  const doc = new jsPDF('landscape');
+export async function exportToPDF(timetable: Timetable) {
+  console.log('exportToPDF – start', timetable.section);
 
-  // Title
-  doc.setFontSize(18);
+  // Fetch fresh data (fall back to mock constants if API is down)
+  const [subjectData, facultyData, classroomData] = await Promise.all([
+    fetchSubjects().catch(() => SUBJECTS),
+    fetchFaculties().catch(() => FACULTIES),
+    fetchClassrooms().catch(() => CLASSROOMS),
+  ]);
+
+  // Build a fast lookup map: "monday_1" → entry
+  const entryMap = new Map<string, (typeof timetable.entries)[0]>();
+  for (const entry of timetable.entries) {
+    const key = `${normalizeDay(entry.day)}_${entry.period}`;
+    if (!entryMap.has(key)) entryMap.set(key, entry);
+  }
+
+  // ── Document setup ─────────────────────────────────────────────────────────
+  const doc = new jsPDF('l', 'mm', 'a4'); // A4 landscape
+
+  // ── Banner ─────────────────────────────────────────────────────────────────
+  doc.setFillColor(30, 58, 138); // same dark‑blue as the UI gradient
+  doc.rect(0, 0, 297, 35, 'F');
+
+  if (logo) {
+    try { doc.addImage(logo, 'PNG', 8, 4, 26, 26); } catch { /* ignore */ }
+  }
+
   doc.setFont('helvetica', 'bold');
-  doc.text('SCHEDULIX - AI TIMETABLE SCHEDULER', 148, 15, { align: 'center' });
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.text('PSG COLLEGE OF TECHNOLOGY', 160, 14, { align: 'center' });
+  doc.setFontSize(13);
+  doc.text('SCHEDULIX – AI TIMETABLE SCHEDULER', 160, 24, { align: 'center' });
 
-  // Subtitle
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text(
-    `Department: ${timetable.department} | Semester: ${timetable.semester} | Section: ${timetable.section}`,
-    148,
-    25,
-    { align: 'center' }
-  );
+  // ── Info bar ───────────────────────────────────────────────────────────────
+  doc.setFillColor(248, 250, 252);
+  doc.rect(0, 35, 297, 12, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 41, 59);
+  doc.text(`DEPARTMENT : ${timetable.department.toUpperCase()}`, 15, 43);
+  doc.text(`SECTION : ${timetable.section}`, 110, 43);
+  doc.text(`SEMESTER : ${timetable.semester}`, 210, 43);
 
-  // Table headers
+  // ── Table layout ───────────────────────────────────────────────────────────
   const startX = 10;
-  const startY = 35;
-  const cellWidth = 35;
-  const cellHeight = 10;
-  const headerHeight = 12;
+  const startY = 51;
+  const periodColWidth = 38; // first column: "DAY / PERIOD"
+  const dayColWidth     = (297 - startX * 2 - periodColWidth) / DAYS.length; // ~43 mm
+  const headerH = 11;
+  const cellH   = 17;
 
-  // Draw header row
-  doc.setFillColor(59, 130, 246); // Blue background
-  doc.setTextColor(255, 255, 255); // White text
+  // ── Header row ─────────────────────────────────────────────────────────────
+  // "DAY / PERIOD" cell
+  doc.setFillColor(30, 58, 138);
+  doc.rect(startX, startY, periodColWidth, headerH, 'F');
+  doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(8);
+  doc.text('DAY / PERIOD', startX + periodColWidth / 2, startY + 7, { align: 'center' });
 
-  // Day/Period header
-  doc.rect(startX, startY, cellWidth, headerHeight, 'F');
-  doc.text('Day / Period', startX + 2, startY + 8);
-
-  // Period headers
-  PERIODS.slice(0, 8).forEach((period, index) => {
-    const x = startX + cellWidth + index * cellWidth;
-    doc.rect(x, startY, cellWidth, headerHeight, 'F');
-    doc.text(`P${period}`, x + cellWidth / 2, startY + 5, { align: 'center' });
-    doc.setFontSize(7);
-    doc.text(PERIOD_TIMINGS[period], x + cellWidth / 2, startY + 10, { align: 'center' });
+  // Day name cells (mirrors the blue header in the UI)
+  DAYS.forEach((day, i) => {
+    const x = startX + periodColWidth + i * dayColWidth;
+    doc.setFillColor(59, 130, 246); // indigo‑500 matches UI header
+    doc.rect(x, startY, dayColWidth, headerH, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
+    doc.text(String(day).toUpperCase(), x + dayColWidth / 2, startY + 7, { align: 'center' });
   });
 
-  // Draw data rows
-  doc.setTextColor(0, 0, 0); // Black text
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
+  // ── Data rows ──────────────────────────────────────────────────────────────
+  let curY = startY + headerH;
 
-  let currentY = startY + headerHeight;
-
-  DAYS.forEach((day) => {
-    // Day column
-    doc.setFillColor(243, 244, 246); // Light gray background
-    doc.rect(startX, currentY, cellWidth, cellHeight, 'FD');
+  PERIODS.slice(0, 8).forEach((period, pIdx) => {
+    // Period label cell (matches the "sticky left" column in the UI)
+    const rowBg = pIdx % 2 === 0 ? [255, 255, 255] : [250, 251, 252];
+    doc.setFillColor(241, 245, 249);
+    doc.rect(startX, curY, periodColWidth, cellH, 'FD');
     doc.setFont('helvetica', 'bold');
-    doc.text(day, startX + 2, currentY + 7);
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Period ${period}`, startX + 2, curY + 6);
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(PERIOD_TIMINGS[period] ?? '', startX + 2, curY + 12);
 
-    // Period columns
-    PERIODS.slice(0, 8).forEach((period, pIndex) => {
-      const x = startX + cellWidth + pIndex * cellWidth;
-      const entry = timetable.entries.find(e => e.day === day && e.period === period && !e.isCancelled);
+    // Day cells
+    DAYS.forEach((day, dIdx) => {
+      const x   = startX + periodColWidth + dIdx * dayColWidth;
+      const key = `${normalizeDay(day)}_${period}`;
+      const entry = entryMap.get(key);
 
-      doc.rect(x, currentY, cellWidth, cellHeight, 'D');
+      // Alternating row background
+      doc.setFillColor(rowBg[0], rowBg[1], rowBg[2]);
+      doc.rect(x, curY, dayColWidth, cellH, 'FD');
 
-      if (entry) {
-        const subject = SUBJECTS.find(s => s.id === entry.subjectId);
-        const faculty = FACULTIES.find(f => f.id === entry.facultyId);
-        const classroom = CLASSROOMS.find(c => c.id === entry.classroomId);
+      if (!entry) {
+        // Empty slot
+        doc.setTextColor(203, 213, 225);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.text('—', x + dayColWidth / 2, curY + cellH / 2 + 2, { align: 'center' });
+        return;
+      }
 
-        if (subject && faculty && classroom) {
-          doc.setFontSize(7);
-          doc.text(subject.subjectCode, x + 2, currentY + 3);
-          doc.text(faculty.name.split(' ')[1] || faculty.name, x + 2, currentY + 6);
-          doc.text(classroom.classroomNumber, x + 2, currentY + 9);
-          doc.setFontSize(8);
-        }
+      if (entry.isCancelled) {
+        // Red cancelled label
+        doc.setTextColor(220, 38, 38);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.text('CANCELLED', x + dayColWidth / 2, curY + cellH / 2 + 2, { align: 'center' });
+        doc.setTextColor(30, 41, 59);
+        return;
+      }
+
+      const subject   = subjectData.find(s => s.id === entry.subjectId);
+      const faculty   = facultyData.find(f => f.id === entry.facultyId);
+      const classroom = classroomData.find(c => c.id === entry.classroomId);
+
+      if (subject && faculty && classroom) {
+        // Line 1 – subject code (bold, like the UI)
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(255, 255, 255); // white‑ish but on light bg → use dark
+        doc.setTextColor(30, 41, 59);
+        doc.text(subject.subjectCode, x + dayColWidth / 2, curY + 5, { align: 'center' });
+
+        // Line 2 – subject name (smaller, slate‑300 equivalent)
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.setTextColor(100, 116, 139);
+        const nameTrunc = subject.subjectName.length > 14
+          ? subject.subjectName.slice(0, 13) + '…'
+          : subject.subjectName;
+        doc.text(nameTrunc, x + dayColWidth / 2, curY + 10, { align: 'center' });
+
+        // Line 3 – "LastName | Room" (tiny, slate‑400 equivalent)
+        doc.setFontSize(5.5);
+        doc.setTextColor(148, 163, 184);
+        const lastName = faculty.name.split(' ').pop() ?? faculty.name;
+        const roomLine = `${lastName} | ${classroom.classroomNumber}`;
+        const roomTrunc = roomLine.length > 16 ? roomLine.slice(0, 15) + '…' : roomLine;
+        doc.text(roomTrunc, x + dayColWidth / 2, curY + 14.5, { align: 'center' });
+
+
       } else {
-        doc.setTextColor(150, 150, 150);
-        doc.text('---', x + cellWidth / 2, currentY + 7, { align: 'center' });
-        doc.setTextColor(0, 0, 0);
+        doc.setTextColor(148, 163, 184);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.text('—', x + dayColWidth / 2, curY + cellH / 2 + 2, { align: 'center' });
       }
     });
 
-    currentY += cellHeight;
+    curY += cellH;
   });
 
-  // Footer
-  doc.setFontSize(8);
-  doc.setTextColor(100, 100, 100);
+  // ── Footer ─────────────────────────────────────────────────────────────────
+  doc.setFontSize(7);
+  doc.setTextColor(148, 163, 184);
+  doc.setFont('helvetica', 'normal');
   doc.text(
-    `Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`,
-    148,
-    currentY + 15,
+    `PSG College of Technology – Generated by Schedulix AI  |  ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}`,
+    148.5,
+    208,
     { align: 'center' }
   );
 
-  // Save PDF
-  doc.save(`Timetable_${timetable.department}_${timetable.section}.pdf`);
+  doc.save(`PSG_Timetable_${(timetable.section || 'export').replace(/\s+/g, '_')}.pdf`);
+  console.log('exportToPDF – done');
 }
 
-/**
- * Export timetable to Excel
- */
-export function exportToExcel(timetable: Timetable) {
-  // Create worksheet data
-  const data: any[][] = [];
+// ─── Export Timetable to Excel ────────────────────────────────────────────────
 
-  // Header row 1 - Title
-  data.push([`SCHEDULIX - ${timetable.department} ${timetable.section} Timetable (Semester ${timetable.semester})`]);
-  data.push([]); // Empty row
+export async function exportToExcel(timetable: Timetable) {
+  const [subjectData, facultyData, classroomData] = await Promise.all([
+    fetchSubjects().catch(() => SUBJECTS),
+    fetchFaculties().catch(() => FACULTIES),
+    fetchClassrooms().catch(() => CLASSROOMS),
+  ]);
 
-  // Header row - Period timings
-  const periodHeaders = ['Day / Period'];
-  PERIODS.slice(0, 8).forEach(period => {
-    periodHeaders.push(`Period ${period}\n${PERIOD_TIMINGS[period]}`);
-  });
-  data.push(periodHeaders);
+  const normalizeDay = (d: string) => d.trim().toLowerCase();
+  const entryMap = new Map<string, (typeof timetable.entries)[0]>();
+  for (const entry of timetable.entries) {
+    const key = `${normalizeDay(entry.day)}_${entry.period}`;
+    if (!entryMap.has(key)) entryMap.set(key, entry);
+  }
 
-  // Data rows
+  const data: string[][] = [];
+  data.push([`PSG COLLEGE OF TECHNOLOGY – ${timetable.department} ${timetable.section} (Sem ${timetable.semester})`]);
+  data.push([]);
+
+  const headers = ['Day / Period', ...PERIODS.slice(0, 8).map(p => `Period ${p}\n${PERIOD_TIMINGS[p] ?? ''}`)];
+  data.push(headers);
+
   DAYS.forEach(day => {
-    const row = [day];
-
+    const row: string[] = [day];
     PERIODS.slice(0, 8).forEach(period => {
-      const entry = timetable.entries.find(e => e.day === day && e.period === period && !e.isCancelled);
-
-      if (entry) {
-        const subject = SUBJECTS.find(s => s.id === entry.subjectId);
-        const faculty = FACULTIES.find(f => f.id === entry.facultyId);
-        const classroom = CLASSROOMS.find(c => c.id === entry.classroomId);
-
-        if (subject && faculty && classroom) {
-          row.push(`${subject.subjectCode}\n${faculty.name}\n${classroom.classroomNumber}`);
-        } else {
-          row.push('---');
-        }
+      const key   = `${normalizeDay(day)}_${period}`;
+      const entry = entryMap.get(key);
+      if (!entry) { row.push(''); return; }
+      if (entry.isCancelled) { row.push('CANCELLED'); return; }
+      const subject   = subjectData.find(s => s.id === entry.subjectId);
+      const faculty   = facultyData.find(f => f.id === entry.facultyId);
+      const classroom = classroomData.find(c => c.id === entry.classroomId);
+      if (subject && faculty && classroom) {
+        row.push(`${subject.subjectCode}\n${subject.subjectName}\n${faculty.name}\n${classroom.classroomNumber}`);
       } else {
         row.push('---');
       }
     });
-
     data.push(row);
   });
 
-  // Create workbook and worksheet
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(data);
-
-  // Set column widths
-  const colWidths = [{ wch: 15 }];
-  for (let i = 0; i < 8; i++) {
-    colWidths.push({ wch: 20 });
-  }
-  ws['!cols'] = colWidths;
-
-  // Set row heights
-  const rowHeights = [{ hpt: 20 }, { hpt: 10 }, { hpt: 30 }];
-  for (let i = 0; i < DAYS.length; i++) {
-    rowHeights.push({ hpt: 60 });
-  }
-  ws['!rows'] = rowHeights;
-
-  // Add worksheet to workbook
+  ws['!cols'] = [{ wch: 18 }, ...Array(8).fill({ wch: 24 })];
+  ws['!rows'] = [{ hpt: 20 }, { hpt: 5 }, { hpt: 28 }, ...Array(DAYS.length).fill({ hpt: 55 })];
   XLSX.utils.book_append_sheet(wb, ws, 'Timetable');
-
-  // Save file
-  XLSX.writeFile(wb, `Timetable_${timetable.department}_${timetable.section}.xlsx`);
+  XLSX.writeFile(wb, `PSG_Timetable_${timetable.department}_${timetable.section}.xlsx`);
 }
 
-/**
- * Export faculty timetable to PDF
- */
+// ─── Export Faculty Timetable to PDF ──────────────────────────────────────────
+
 export function exportFacultyToPDF(facultyName: string, entries: any[], department: string) {
-  const doc = new jsPDF('landscape');
+  const doc = new jsPDF('l', 'mm', 'a4');
 
-  // Title
-  doc.setFontSize(18);
+  // Banner
+  doc.setFillColor(22, 101, 52);
+  doc.rect(0, 0, 297, 35, 'F');
+  if (logo) {
+    try { doc.addImage(logo, 'PNG', 8, 4, 26, 26); } catch { /* ignore */ }
+  }
   doc.setFont('helvetica', 'bold');
-  doc.text('SCHEDULIX - FACULTY TIMETABLE', 148, 15, { align: 'center' });
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(20);
+  doc.text('PSG COLLEGE OF TECHNOLOGY', 160, 14, { align: 'center' });
+  doc.setFontSize(13);
+  doc.text('FACULTY TIMETABLE', 160, 24, { align: 'center' });
 
-  // Subtitle
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Faculty: ${facultyName} | Department: ${department}`, 148, 25, { align: 'center' });
+  // Info bar
+  doc.setFillColor(240, 253, 244);
+  doc.rect(0, 35, 297, 12, 'F');
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(22, 101, 52);
+  doc.text(`FACULTY : ${facultyName.toUpperCase()}`, 15, 43);
+  doc.text(`DEPARTMENT : ${department.toUpperCase()}`, 120, 43);
+  doc.text(`DATE : ${new Date().toLocaleDateString()}`, 220, 43);
 
-  // Table (similar structure to main timetable)
+  // Table layout
   const startX = 10;
-  const startY = 35;
-  const cellWidth = 35;
-  const cellHeight = 10;
-  const headerHeight = 12;
+  const startY = 51;
+  const periodColWidth = 38;
+  const dayColWidth = (297 - startX * 2 - periodColWidth) / DAYS.length;
+  const headerH = 11;
+  const cellH   = 17;
 
-  // Header
-  doc.setFillColor(59, 130, 246);
+  // Header row
+  doc.setFillColor(22, 101, 52);
+  doc.rect(startX, startY, periodColWidth, headerH, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(8);
+  doc.text('DAY / PERIOD', startX + periodColWidth / 2, startY + 7, { align: 'center' });
 
-  doc.rect(startX, startY, cellWidth, headerHeight, 'F');
-  doc.text('Day / Period', startX + 2, startY + 8);
-
-  PERIODS.slice(0, 8).forEach((period, index) => {
-    const x = startX + cellWidth + index * cellWidth;
-    doc.rect(x, startY, cellWidth, headerHeight, 'F');
-    doc.text(`P${period}`, x + cellWidth / 2, startY + 5, { align: 'center' });
-    doc.setFontSize(7);
-    doc.text(PERIOD_TIMINGS[period], x + cellWidth / 2, startY + 10, { align: 'center' });
+  DAYS.forEach((day, i) => {
+    const x = startX + periodColWidth + i * dayColWidth;
+    doc.setFillColor(34, 197, 94);
+    doc.rect(x, startY, dayColWidth, headerH, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
+    doc.text(String(day).toUpperCase(), x + dayColWidth / 2, startY + 7, { align: 'center' });
   });
 
   // Data rows
-  doc.setTextColor(0, 0, 0);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-
-  let currentY = startY + headerHeight;
-
-  DAYS.forEach(day => {
-    doc.setFillColor(243, 244, 246);
-    doc.rect(startX, currentY, cellWidth, cellHeight, 'FD');
+  let curY = startY + headerH;
+  PERIODS.slice(0, 8).forEach((period, pIdx) => {
+    const rowBg = pIdx % 2 === 0 ? [255, 255, 255] : [250, 251, 252];
+    doc.setFillColor(241, 245, 249);
+    doc.rect(startX, curY, periodColWidth, cellH, 'FD');
     doc.setFont('helvetica', 'bold');
-    doc.text(day, startX + 2, currentY + 7);
+    doc.setFontSize(8);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Period ${period}`, startX + 2, curY + 6);
     doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.text(PERIOD_TIMINGS[period] ?? '', startX + 2, curY + 12);
 
-    PERIODS.slice(0, 8).forEach((period, pIndex) => {
-      const x = startX + cellWidth + pIndex * cellWidth;
+    DAYS.forEach((day, dIdx) => {
+      const x = startX + periodColWidth + dIdx * dayColWidth;
       const entry = entries.find(e => e.day === day && e.period === period && !e.isCancelled);
-
-      doc.rect(x, currentY, cellWidth, cellHeight, 'D');
-
+      doc.setFillColor(rowBg[0], rowBg[1], rowBg[2]);
+      doc.rect(x, curY, dayColWidth, cellH, 'FD');
       if (entry) {
-        doc.setFontSize(7);
-        doc.text(entry.subject || '---', x + 2, currentY + 4);
-        doc.text(entry.section || '', x + 2, currentY + 7);
+        doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
+        doc.setTextColor(30, 41, 59);
+        doc.text(entry.subject || '---', x + dayColWidth / 2, curY + 6, { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(100, 116, 139);
+        doc.text(entry.section || '', x + dayColWidth / 2, curY + 12, { align: 'center' });
       } else {
-        doc.setTextColor(150, 150, 150);
-        doc.text('---', x + cellWidth / 2, currentY + 7, { align: 'center' });
-        doc.setTextColor(0, 0, 0);
+        doc.setTextColor(203, 213, 225);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(9);
+        doc.text('—', x + dayColWidth / 2, curY + cellH / 2 + 2, { align: 'center' });
       }
     });
-
-    currentY += cellHeight;
+    curY += cellH;
   });
 
-  // Footer
-  doc.setFontSize(8);
-  doc.setTextColor(100, 100, 100);
+  doc.setFontSize(7);
+  doc.setTextColor(148, 163, 184);
   doc.text(
-    `Generated on ${new Date().toLocaleDateString()}`,
-    148,
-    currentY + 15,
-    { align: 'center' }
+    `PSG College of Technology – Generated by Schedulix AI  |  ${new Date().toLocaleDateString()}`,
+    148.5, 208, { align: 'center' }
   );
 
-  doc.save(`Faculty_Timetable_${facultyName.replace(/\s+/g, '_')}.pdf`);
+  const safeName = (facultyName || 'Faculty').replace(/\s+/g, '_');
+  doc.save(`PSG_Faculty_${safeName}.pdf`);
 }

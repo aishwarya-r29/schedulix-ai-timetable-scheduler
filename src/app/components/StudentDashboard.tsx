@@ -9,8 +9,10 @@ import {
   Clock,
   User,
   GraduationCap,
+  AlertCircle,
 } from 'lucide-react';
-import { useAuth, getStudentByUserId } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
+import { useAppData } from '../context/AppDataContext';
 import {
   SUBJECTS,
   FACULTIES,
@@ -28,15 +30,17 @@ export default function StudentDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const student = getStudentByUserId(user?.id || '');
+  const { students = [], departments = [], subjects = [], faculties = [], classrooms = [], loading: contextLoading } = useAppData();
+  const student = students.find(s => s.userId === user?.id);
   const [sectionTimetable, setSectionTimetable] = useState<any>(null);
   const [loadingTimetable, setLoadingTimetable] = useState(true);
 
-  const displayName = user?.name || student?.name || 'Student';
-  const displayRollNumber = student?.rollNumber || user?.email || '---';
-  const displayDepartment = student?.department || user?.department || '---';
-  const displaySection = student?.section || '---';
+  const dept = departments.find(d => d.id === student?.department);
+  const displayName = student?.name || user?.name || 'Student';
+  const displayRollNumber = student?.rollNumber || '---';
+  const displayDepartment = dept ? dept.name : (student?.department || '---');
   const displaySemester = student?.semester || 4;
+  const displaySection = student?.section || '---';
 
   const handleLogout = () => {
     logout();
@@ -66,9 +70,35 @@ export default function StudentDashboard() {
       });
   }, [student]);
 
+  if (contextLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+          <p className="text-slate-400 animate-pulse">Synchronizing Student Profile...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center">
+        <div className="max-w-md w-full mx-4 p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl text-center">
+          <AlertCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-white mb-2">Student Profile Not Found</h2>
+          <p className="text-slate-400 mb-6">We couldn't find a student profile associated with your account. Please contact the administrator.</p>
+          <button onClick={() => { logout(); navigate('/'); }} className="px-6 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors">
+            Back to Login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const timetable = sectionTimetable || (student ? getTimetableForSection(student.department, student.section) : null);
   const sectionSubjects = student
-    ? SUBJECTS.filter(s => s.department === student.department && s.semester === student.semester)
+    ? subjects.filter(s => s.department === student.department && s.semester === student.semester)
     : [];
 
   return (
@@ -118,7 +148,7 @@ export default function StudentDashboard() {
               <User className="w-6 h-6 text-white" />
             </div>
             <div className="text-sm text-slate-400 mb-1">Roll Number</div>
-            <div className="text-xl font-bold text-white font-mono">{student.rollNumber}</div>
+            <div className="text-xl font-bold text-white font-mono">{displayRollNumber}</div>
           </div>
 
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
@@ -134,7 +164,7 @@ export default function StudentDashboard() {
               <BookOpen className="w-6 h-6 text-white" />
             </div>
             <div className="text-sm text-slate-400 mb-1">Department</div>
-            <div className="text-xl font-bold text-white">{student.department}</div>
+            <div className="text-xl font-bold text-white">{displayDepartment}</div>
           </div>
 
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-6">
@@ -142,7 +172,7 @@ export default function StudentDashboard() {
               <Clock className="w-6 h-6 text-white" />
             </div>
             <div className="text-sm text-slate-400 mb-1">Section</div>
-            <div className="text-xl font-bold text-white">{student.section}</div>
+            <div className="text-xl font-bold text-white">{displaySection}</div>
           </div>
         </div>
 
@@ -174,7 +204,7 @@ export default function StudentDashboard() {
           <div className="bg-white/5 p-6 border-b border-white/10 flex justify-between items-center">
             <div>
               <h3 className="text-2xl font-bold text-white mb-1">Your Timetable</h3>
-              <p className="text-slate-400">Weekly class schedule for {student.section}</p>
+              <p className="text-slate-400">Weekly class schedule for {displaySection}</p>
             </div>
 
             {timetable ? (
@@ -226,9 +256,9 @@ export default function StudentDashboard() {
                       </td>
                       {PERIODS.slice(0, 8).map(period => {
                         const entry = timetable.entries.find(e => e.day === day && e.period === period);
-                        const subject = entry ? SUBJECTS.find(s => s.id === entry.subjectId) : null;
-                        const faculty = entry ? FACULTIES.find(f => f.id === entry.facultyId) : null;
-                        const classroom = entry ? CLASSROOMS.find(c => c.id === entry.classroomId) : null;
+                        const subject = entry ? subjects.find(s => s.id === entry.subjectId) : null;
+                        const faculty = entry ? faculties.find(f => f.id === entry.facultyId) : null;
+                        const classroom = entry ? classrooms.find(c => c.id === entry.classroomId) : null;
 
                         return (
                           <td

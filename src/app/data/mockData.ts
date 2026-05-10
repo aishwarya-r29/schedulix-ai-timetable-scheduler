@@ -22,7 +22,7 @@ export interface Student {
   group?: string;
   email: string;
   password: string;
-  department: 'CSE' | 'IT';
+  department: string;
 }
 
 export interface Faculty {
@@ -30,7 +30,7 @@ export interface Faculty {
   userId: string;
   name: string;
   designation: string;
-  department: 'CSE' | 'IT';
+  department: string;
   email: string;
   password: string;
   subjects: string[];
@@ -41,7 +41,7 @@ export interface Faculty {
 
 export interface Group {
   id: string;               // e.g. "CSE G1"
-  department: 'CSE' | 'IT';
+  department: string;
   name: string;             // "G1" | "G2" | custom
   semester: number;
   studentIds: string[];
@@ -52,7 +52,7 @@ export interface Subject {
   subjectName: string;
   subjectCode: string;
   credits: number;
-  department: 'CSE' | 'IT';
+  department: string;
   semester: number;
   assignedFaculty: string[];
   type: 'theory' | 'lab';
@@ -64,7 +64,7 @@ export interface Classroom {
   capacity: number;
   status: 'available' | 'occupied' | 'maintenance';
   roomType: 'theory' | 'lab';           // derived from classroomNumber prefix, editable
-  departmentPriority?: 'CSE' | 'IT' | 'Both'; // preferred dept (Both = shared)
+  departmentPriority?: string; // preferred dept (Both = shared)
 }
 
 export interface TimetableEntry {
@@ -81,7 +81,7 @@ export interface TimetableEntry {
 
 export interface Timetable {
   id: string;
-  department: 'CSE' | 'IT';
+  department: string;
   semester: number;
   section: string;
   generatedBy: string;

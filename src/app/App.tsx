@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AppDataProvider } from './context/AppDataContext';
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import AdminDashboard from './components/AdminDashboard';
@@ -67,7 +68,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppContent />
+        <AppDataProvider>
+          <AppContent />
+        </AppDataProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -65,3 +65,79 @@ export async function fetchSubjects() {
 export async function fetchClassrooms() {
   return apiRequest('/api/classrooms');
 }
+
+// ─── Faculty CRUD ──────────────────────────────────────────────────────────────
+
+export async function createFaculty(faculty: any) {
+  return apiRequest('/api/faculties', { method: 'POST', body: JSON.stringify(faculty) });
+}
+
+export async function updateFacultyApi(faculty: any) {
+  return apiRequest(`/api/faculties/${encodeURIComponent(faculty.id)}`, { method: 'PUT', body: JSON.stringify(faculty) });
+}
+
+export async function deleteFacultyApi(id: string) {
+  return apiRequest(`/api/faculties/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ─── Student CRUD ──────────────────────────────────────────────────────────────
+
+export async function createStudent(student: any) {
+  return apiRequest('/api/students', { method: 'POST', body: JSON.stringify(student) });
+}
+
+export async function updateStudentApi(student: any) {
+  return apiRequest(`/api/students/${encodeURIComponent(student.id)}`, { method: 'PUT', body: JSON.stringify(student) });
+}
+
+export async function deleteStudentApi(id: string) {
+  return apiRequest(`/api/students/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ─── Subject CRUD ──────────────────────────────────────────────────────────────
+
+export async function createSubject(subject: any) {
+  return apiRequest('/api/subjects', { method: 'POST', body: JSON.stringify(subject) });
+}
+
+export async function updateSubjectApi(subject: any) {
+  return apiRequest(`/api/subjects/${encodeURIComponent(subject.id)}`, { method: 'PUT', body: JSON.stringify(subject) });
+}
+
+export async function deleteSubjectApi(id: string) {
+  return apiRequest(`/api/subjects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ─── Classroom CRUD ────────────────────────────────────────────────────────────
+
+export async function createClassroom(classroom: any) {
+  return apiRequest('/api/classrooms', { method: 'POST', body: JSON.stringify(classroom) });
+}
+
+export async function updateClassroomApi(classroom: any) {
+  return apiRequest(`/api/classrooms/${encodeURIComponent(classroom.id)}`, { method: 'PUT', body: JSON.stringify(classroom) });
+}
+
+export async function deleteClassroomApi(id: string) {
+  return apiRequest(`/api/classrooms/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ─── Department CRUD ───────────────────────────────────────────────────────────
+
+export async function fetchDepartments() {
+  return apiRequest('/api/departments');
+}
+
+export async function createDepartment(dept: any) {
+  return apiRequest('/api/departments', {
+    method: 'POST',
+    body: JSON.stringify(dept),
+  });
+}
+
+export async function deleteDepartmentApi(id: string) {
+  return apiRequest(`/api/departments/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+

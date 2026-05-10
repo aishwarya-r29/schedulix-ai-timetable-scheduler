@@ -12,10 +12,11 @@ import {
 export interface FacultyProfile {
   isHOD?: boolean;
   maxDailySlots?: number;
+  offSlots?: string[]; // ["Monday_1", "Tuesday_5"]
 }
 
 export interface GenerationConfig {
-  department: 'CSE' | 'IT';
+  department: string;
   semester: number;
   section: string;
   subjects: Subject[];
@@ -134,9 +135,17 @@ function isFacultyBusy(
   facultyId: string,
   day: string,
   period: number,
-  map: Record<string, FacultySlotState>
+  map: Record<string, FacultySlotState>,
+  profiles?: Record<string, FacultyProfile>
 ): boolean {
-  return !!map[facultyId]?.occupiedSlots.has(`${day}_${period}`);
+  // Check if they are already teaching a class in this slot
+  if (map[facultyId]?.occupiedSlots.has(`${day}_${period}`)) return true;
+
+  // Check if they have marked this slot as "OFF"
+  const offSlots = profiles?.[facultyId]?.offSlots || [];
+  if (offSlots.includes(`${day}_${period}`)) return true;
+
+  return false;
 }
 
 function canFacultyTeach(
@@ -267,7 +276,7 @@ function scheduleAllLabs(
 
         for (const win of shuffle(windows)) {
           // Faculty free for all 4 periods?
-          if (!win.every(p => !isFacultyBusy(facultyId, day, p, facultySlotMap))) continue;
+          if (!win.every(p => !isFacultyBusy(facultyId, day, p, facultySlotMap, facultyProfiles))) continue;
           if (!canFacultyTeach(facultyId, day, facultySlotMap, facultyProfiles)) continue;
 
           // Slots not yet reserved by another lab this generation?
@@ -337,7 +346,7 @@ function fillTheorySlots(
 
       const facultyId = facultyAssignments[s.id];
       if (!facultyId) return false;
-      if (isFacultyBusy(facultyId, day, period, facultySlotMap)) return false;
+      if (isFacultyBusy(facultyId, day, period, facultySlotMap, facultyProfiles)) return false;
       if (!canFacultyTeach(facultyId, day, facultySlotMap, facultyProfiles)) return false;
 
       // ≤ 2 slots of this subject per day

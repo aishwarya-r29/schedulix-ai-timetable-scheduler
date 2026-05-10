@@ -3,18 +3,27 @@ import {
   Faculty, Student, Subject, Classroom, Group, Timetable,
   FACULTIES, STUDENTS, SUBJECTS, CLASSROOMS, GROUPS, TIMETABLES,
   deriveRoomType,
+  User,
 } from '../data/mockData';
+import {
+  createFaculty as apiFacultyCreate, updateFacultyApi, deleteFacultyApi, fetchFaculties,
+  createStudent as apiStudentCreate, updateStudentApi, deleteStudentApi, fetchStudents,
+  createSubject as apiSubjectCreate, updateSubjectApi, deleteSubjectApi, fetchSubjects,
+  createClassroom as apiClassroomCreate, updateClassroomApi, deleteClassroomApi, fetchClassrooms,
+  fetchDepartments, createDepartment as apiDepartmentCreate, deleteDepartmentApi,
+  fetchAllTimetables, saveTimetable,
+} from '../utils/api';
+import { saveLocalTimetable, load, persist, KEYS } from '../utils/storage';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface Department {
   id: string; // 'CSE' | 'IT' | custom
   name: string;
-  fullName: string;
+  fullName?: string;
 }
 
 interface AppDataContextType {
-  // Data
   faculties: Faculty[];
   students: Student[];
   subjects: Subject[];
@@ -24,7 +33,7 @@ interface AppDataContextType {
   timetables: Timetable[];
 
   // Faculty CRUD
-  addFaculty: (f: Omit<Faculty, 'id' | 'userId'>) => string | null; // returns error or null
+  addFaculty: (f: Omit<Faculty, 'id' | 'userId'>) => string | null;
   updateFaculty: (f: Faculty) => string | null;
   deleteFaculty: (id: string) => string | null;
 
@@ -53,38 +62,11 @@ interface AppDataContextType {
 
   // Timetable store
   saveTimetableToStore: (tt: Timetable) => void;
+  refreshTimetables: () => Promise<void>;
+  loading: boolean;
 }
 
 const AppDataContext = createContext<AppDataContextType | undefined>(undefined);
-
-// ─── Storage Keys ─────────────────────────────────────────────────────────────
-
-const KEYS = {
-  faculties: 'schedulix_faculties',
-  students: 'schedulix_students',
-  subjects: 'schedulix_subjects',
-  classrooms: 'schedulix_classrooms',
-  groups: 'schedulix_groups',
-  departments: 'schedulix_departments',
-  timetables: 'schedulix_all_timetables',
-};
-
-function load<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function persist<T>(key: string, value: T) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // storage quota exceeded — silently ignore
-  }
-}
 
 // ─── Default Departments ──────────────────────────────────────────────────────
 
@@ -103,6 +85,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   const [groups,       setGroupsState]       = useState<Group[]>(() => load(KEYS.groups,         GROUPS));
   const [departments,  setDepartmentsState]  = useState<Department[]>(() => load(KEYS.departments, DEFAULT_DEPARTMENTS));
   const [timetables,   setTimetablesState]   = useState<Timetable[]>(() => load(KEYS.timetables,  TIMETABLES));
+  const [loading,      setLoading]           = useState(true);
 
   // Sync helpers
   const setFaculties  = useCallback((v: Faculty[])    => { setFacultiesState(v);  persist(KEYS.faculties,  v); }, []);
@@ -113,15 +96,58 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
   const setDepts      = useCallback((v: Department[]) => { setDepartmentsState(v);persist(KEYS.departments,v); }, []);
   const setTimetables = useCallback((v: Timetable[])  => { setTimetablesState(v); persist(KEYS.timetables, v); }, []);
 
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    console.log('=== APP DATA CONTEXT: FETCHING INITIAL DATA FROM SERVER ===');
+    try {
+      const [remoteFaculties, remoteStudents, remoteSubjects, remoteClassrooms, remoteDepartments, remoteTimetables] = await Promise.all([
+        fetchFaculties().catch(() => null),
+        fetchStudents().catch(() => null),
+        fetchSubjects().catch(() => null),
+        fetchClassrooms().catch(() => null),
+        fetchDepartments().catch(() => null),
+        fetchAllTimetables().catch(() => null),
+      ]);
+
+      setFacultiesState(remoteFaculties || []);
+      setStudentsState(remoteStudents || []);
+      setSubjectsState(remoteSubjects || []);
+      setClassroomsState(remoteClassrooms || []);
+      setDepartmentsState(remoteDepartments || DEFAULT_DEPARTMENTS);
+      setTimetablesState(remoteTimetables || []);
+      
+      // Persist to local storage for quick subsequent loads
+      if (remoteFaculties) persist(KEYS.faculties, remoteFaculties);
+      if (remoteStudents) persist(KEYS.students, remoteStudents);
+      if (remoteSubjects) persist(KEYS.subjects, remoteSubjects);
+      if (remoteClassrooms) persist(KEYS.classrooms, remoteClassrooms);
+      if (remoteDepartments) persist(KEYS.departments, remoteDepartments);
+      if (remoteTimetables) persist(KEYS.timetables, remoteTimetables);
+
+    } catch (e) {
+      console.error('Failed to fetch data from backend', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
   // ── Faculty CRUD ─────────────────────────────────────────────────────────────
 
   const addFaculty = useCallback((f: Omit<Faculty, 'id' | 'userId'>): string | null => {
     if (!f.name.trim() || !f.email.trim()) return 'Name and email are required.';
     const exists = faculties.some(x => x.email.toLowerCase() === f.email.toLowerCase().trim());
     if (exists) return 'A faculty member with this email already exists.';
+    
+    // Create local object with predictable IDs that backend will respect
     const id = `f${Date.now()}`;
     const newF: Faculty = { ...f, id, userId: `u_${id}`, name: f.name.trim(), email: f.email.trim() };
+    
     setFaculties([...faculties, newF]);
+    apiFacultyCreate(newF).catch(e => console.warn('Backend sync (add faculty):', e));
     return null;
   }, [faculties, setFaculties]);
 
@@ -129,12 +155,15 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!f.name.trim() || !f.email.trim()) return 'Name and email are required.';
     const dup = faculties.find(x => x.email.toLowerCase() === f.email.toLowerCase().trim() && x.id !== f.id);
     if (dup) return 'Another faculty member already has this email.';
-    setFaculties(faculties.map(x => x.id === f.id ? { ...f, name: f.name.trim(), email: f.email.trim() } : x));
+    const updated = { ...f, name: f.name.trim(), email: f.email.trim() };
+    setFaculties(faculties.map(x => x.id === f.id ? updated : x));
+    updateFacultyApi(updated).catch(e => console.warn('Backend sync (update faculty):', e));
     return null;
   }, [faculties, setFaculties]);
 
   const deleteFaculty = useCallback((id: string): string | null => {
     setFaculties(faculties.filter(x => x.id !== id));
+    deleteFacultyApi(id).catch(e => console.warn('Backend sync (delete faculty):', e));
     return null;
   }, [faculties, setFaculties]);
 
@@ -144,12 +173,11 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!s.name.trim() || !s.rollNumber.trim()) return 'Name and roll number are required.';
     if (students.some(x => x.rollNumber === s.rollNumber.trim())) return 'Roll number already exists.';
     if (students.some(x => x.email.toLowerCase() === s.email.toLowerCase().trim())) return 'Email already exists.';
-    // One-group rule: section encodes the group
     const id = `s_${s.rollNumber.trim()}`;
     const newS: Student = { ...s, id, userId: s.rollNumber.trim(), name: s.name.trim(), rollNumber: s.rollNumber.trim(), email: s.email.trim() };
     setStudents([...students, newS]);
-    // Add to group
     setGroups(groups.map(g => g.id === s.section ? { ...g, studentIds: [...g.studentIds, id] } : g));
+    apiStudentCreate(newS).catch(e => console.warn('Backend sync (add student):', e));
     return null;
   }, [students, groups, setStudents, setGroups]);
 
@@ -159,7 +187,6 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!old) return 'Student not found.';
     const dup = students.find(x => x.email.toLowerCase() === s.email.toLowerCase().trim() && x.id !== s.id);
     if (dup) return 'Another student already has this email.';
-    // If group changed, update group membership
     if (old.section !== s.section) {
       setGroups(groups.map(g => {
         if (g.id === old.section) return { ...g, studentIds: g.studentIds.filter(sid => sid !== s.id) };
@@ -167,7 +194,9 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
         return g;
       }));
     }
-    setStudents(students.map(x => x.id === s.id ? { ...s, name: s.name.trim(), email: s.email.trim() } : x));
+    const updated = { ...s, name: s.name.trim(), email: s.email.trim() };
+    setStudents(students.map(x => x.id === s.id ? updated : x));
+    updateStudentApi(updated).catch(e => console.warn('Backend sync (update student):', e));
     return null;
   }, [students, groups, setStudents, setGroups]);
 
@@ -175,6 +204,7 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     const s = students.find(x => x.id === id);
     if (s) setGroups(groups.map(g => g.id === s.section ? { ...g, studentIds: g.studentIds.filter(sid => sid !== id) } : g));
     setStudents(students.filter(x => x.id !== id));
+    deleteStudentApi(id).catch(e => console.warn('Backend sync (delete student):', e));
     return null;
   }, [students, groups, setStudents, setGroups]);
 
@@ -184,18 +214,22 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!s.subjectName.trim() || !s.subjectCode.trim()) return 'Name and code are required.';
     if (subjects.some(x => x.subjectCode === s.subjectCode.trim())) return 'Subject code already exists.';
     const id = s.subjectCode.trim();
-    setSubjects([...subjects, { ...s, id, subjectName: s.subjectName.trim(), subjectCode: s.subjectCode.trim() }]);
+    const newS = { ...s, id, subjectName: s.subjectName.trim(), subjectCode: s.subjectCode.trim() };
+    setSubjects([...subjects, newS]);
+    apiSubjectCreate(newS).catch(e => console.warn('Backend sync (add subject):', e));
     return null;
   }, [subjects, setSubjects]);
 
   const updateSubject = useCallback((s: Subject): string | null => {
     if (!s.subjectName.trim() || !s.subjectCode.trim()) return 'Name and code are required.';
     setSubjects(subjects.map(x => x.id === s.id ? s : x));
+    updateSubjectApi(s).catch(e => console.warn('Backend sync (update subject):', e));
     return null;
   }, [subjects, setSubjects]);
 
   const deleteSubject = useCallback((id: string): string | null => {
     setSubjects(subjects.filter(x => x.id !== id));
+    deleteSubjectApi(id).catch(e => console.warn('Backend sync (delete subject):', e));
     return null;
   }, [subjects, setSubjects]);
 
@@ -207,7 +241,9 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       return 'A classroom with this room number already exists.';
     const id = `cr${Date.now()}`;
     const roomType = c.roomType ?? deriveRoomType(c.classroomNumber);
-    setClassrooms([...classrooms, { ...c, id, classroomNumber: c.classroomNumber.trim(), roomType }]);
+    const newC = { ...c, id, classroomNumber: c.classroomNumber.trim(), roomType };
+    setClassrooms([...classrooms, newC]);
+    apiClassroomCreate(newC).catch(e => console.warn('Backend sync (add classroom):', e));
     return null;
   }, [classrooms, setClassrooms]);
 
@@ -216,11 +252,13 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     const dup = classrooms.find(x => x.classroomNumber.toLowerCase() === c.classroomNumber.toLowerCase().trim() && x.id !== c.id);
     if (dup) return 'Another classroom already has this room number.';
     setClassrooms(classrooms.map(x => x.id === c.id ? c : x));
+    updateClassroomApi(c).catch(e => console.warn('Backend sync (update classroom):', e));
     return null;
   }, [classrooms, setClassrooms]);
 
   const deleteClassroom = useCallback((id: string): string | null => {
     setClassrooms(classrooms.filter(x => x.id !== id));
+    deleteClassroomApi(id).catch(e => console.warn('Backend sync (delete classroom):', e));
     return null;
   }, [classrooms, setClassrooms]);
 
@@ -247,27 +285,42 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
     if (!d.name.trim()) return 'Department name is required.';
     if (departments.some(x => x.id === d.id)) return 'Department already exists.';
     setDepts([...departments, d]);
+    apiDepartmentCreate(d).catch(e => console.warn('Backend sync (add department):', e));
     return null;
   }, [departments, setDepts]);
 
   const deleteDepartment = useCallback((id: string): string | null => {
     if (id === 'CSE' || id === 'IT') return 'Core departments cannot be deleted.';
     setDepts(departments.filter(x => x.id !== id));
+    deleteDepartmentApi(id).catch(e => console.warn('Backend sync (delete department):', e));
     return null;
   }, [departments, setDepts]);
 
   // ── Timetable Store ───────────────────────────────────────────────────────────
 
+  const refreshTimetables = useCallback(async () => {
+    try {
+      const remoteTimetables = await fetchAllTimetables();
+      if (remoteTimetables) {
+        setTimetablesState(remoteTimetables);
+        persist(KEYS.timetables, remoteTimetables);
+      }
+    } catch (e) {
+      console.warn('Failed to refresh timetables:', e);
+    }
+  }, []);
+
   const saveTimetableToStore = useCallback((tt: Timetable) => {
-    setTimetables(prev => {
+    setTimetablesState(prev => {
       const idx = prev.findIndex(x => x.department === tt.department && x.section === tt.section);
       const next = [...prev];
       if (idx >= 0) next[idx] = tt; else next.push(tt);
+      persist(KEYS.timetables, next);
       return next;
     });
-    persist(KEYS.timetables, timetables);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timetables]);
+    saveTimetable(tt).catch(e => console.warn('Backend sync (save timetable):', e));
+    saveLocalTimetable(tt);
+  }, []);
 
   // Keep global TIMETABLES array in sync for legacy code that reads it directly
   useEffect(() => {
@@ -284,7 +337,8 @@ export const AppDataProvider = ({ children }: { children: ReactNode }) => {
       addClassroom, updateClassroom, deleteClassroom,
       addGroup, deleteGroup,
       addDepartment, deleteDepartment,
-      saveTimetableToStore,
+      saveTimetableToStore, refreshTimetables,
+      loading
     }}>
       {children}
     </AppDataContext.Provider>
